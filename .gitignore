@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+.DS_Store
+.env
+.env.*
+!.env.example
+.claude/settings.local.json
+*.local
+playwright-report/
+test-results/
+.vite/
+runtime/marmot-web/target/
+runtime/marmot-web/pkg/

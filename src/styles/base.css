@@ -1,0 +1,378 @@
+:root {
+  --color-canvas: #eceae2;
+  --color-surface: #e4e0d6;
+  --color-ink: #241f17;
+  --color-muted: #8a8377;
+  --color-line: #dad6cb;
+  --color-primary: #e9c65c;
+  --color-on-primary: #241f17;
+  --color-accent: #e9c65c;
+  --color-accent-ink: #8a6314;
+  --color-accent-wash: #f4e8c8;
+  --color-positive: #2e9c68;
+  --color-negative: #e5674a;
+  --color-warn-wash: #f2e2da;
+  --color-warn-ink: #8a3320;
+  --color-warn-stroke: #b4462f;
+
+  --font-sans: 'Geist', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, sfmono-regular, menlo, monospace;
+
+  --text-caption: 12px;
+  --text-label: 13px;
+  --text-body: 15px;
+  --text-title: 17px;
+  --text-display: 28px;
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+  --radius-full: 999px;
+
+  color: var(--color-ink);
+  background: var(--color-canvas);
+  font-family: var(--font-sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.btc-mark {
+  display: inline-block;
+  flex-shrink: 0;
+  width: auto;
+  height: 1em;
+  color: currentColor;
+  vertical-align: -0.1em;
+  overflow: visible;
+}
+
+html {
+  min-width: 320px;
+  min-height: 100%;
+  background: var(--color-canvas);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+button,
+input,
+textarea {
+  color: inherit;
+  font: inherit;
+}
+
+button,
+input[type='checkbox'] {
+  cursor: pointer;
+}
+
+button:disabled,
+input:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+a,
+button,
+input,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-accent-ink);
+  outline-offset: 3px;
+}
+
+.app-frame {
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-canvas);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.app-frame--dark {
+  background-color: #0b0906;
+  background-image:
+    radial-gradient(
+      ellipse 70% 45% at 12% 30%,
+      oklab(71.2% 0.014 0.13 / 30%) 0%,
+      oklab(71.2% 0.014 0.13 / 0%) 40%
+    ),
+    radial-gradient(
+      ellipse 80% 50% at 92% 78%,
+      oklab(71.2% 0.014 0.13 / 26%) 0%,
+      oklab(71.2% 0.014 0.13 / 0%) 44%
+    ),
+    radial-gradient(
+      ellipse 60% 40% at 60% 100%,
+      oklab(71.2% 0.014 0.13 / 14%) 0%,
+      oklab(71.2% 0.014 0.13 / 0%) 50%
+    );
+}
+
+.app-frame:has(.onb-welcome),
+.app-frame:has(.sr-shell--dark),
+.app-frame:has(.result-screen),
+.app-frame:has(.chat-dark),
+.app-frame:has(.qr-share) {
+  background-color: #0b0906;
+  background-image:
+    radial-gradient(
+      ellipse 70% 45% at 12% 30%,
+      oklab(71.2% 0.014 0.13 / 30%) 0%,
+      oklab(71.2% 0.014 0.13 / 0%) 40%
+    ),
+    radial-gradient(
+      ellipse 80% 50% at 92% 78%,
+      oklab(71.2% 0.014 0.13 / 26%) 0%,
+      oklab(71.2% 0.014 0.13 / 0%) 44%
+    ),
+    radial-gradient(
+      ellipse 60% 40% at 60% 100%,
+      oklab(71.2% 0.014 0.13 / 14%) 0%,
+      oklab(71.2% 0.014 0.13 / 0%) 50%
+    );
+}
+
+/* ---------------------------------------------------------------------------
+ * Dark color scheme — wallet screens only. Chat keeps the light :root tokens.
+ * Scoped to app-frames that hold no chat-* content. Colors only; no layout,
+ * transition, or behavior changes.
+ * ------------------------------------------------------------------------- */
+
+.app-frame:not(:has([class^='chat-'])) {
+  --color-canvas: #121316;
+  --color-surface: #1c1d22;
+  --color-ink: #f3efe4;
+  --color-muted: #8b8a97;
+  --color-line: #2a2c33;
+  --color-primary: #f3efe4;
+  --color-on-primary: #0b0814;
+  --color-accent: #f3efe4;
+  --color-accent-ink: #f3efe4;
+  --color-accent-wash: #24252b;
+  --color-positive: #34c77b;
+  --color-warn-wash: #3a2f2a;
+  --color-warn-ink: #e6b8a6;
+  --color-warn-stroke: #e5674a;
+
+  background-color: #121316;
+  background-image: none;
+}
+
+.app-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  max-width: 390px;
+  margin-inline: auto;
+  padding: 14px 20px 6px;
+}
+
+.wordmark {
+  margin: 0;
+  font-size: var(--text-label);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink);
+}
+
+.simulation-banner {
+  margin: 0;
+  padding: 5px 10px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-wash);
+  color: var(--color-accent-ink);
+  font-size: var(--text-caption);
+  font-weight: var(--font-weight-semibold);
+}
+
+.screen {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 390px;
+  margin-inline: auto;
+}
+
+.app-frame:has(.home-shell) {
+  height: 100vh;
+  height: 100dvh;
+}
+
+.screen > section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  animation: screen-in 150ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen > section {
+    animation: none;
+  }
+}
+
+@keyframes screen-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Wallet screen transitions (View Transitions API) */
+
+.home-shell,
+.sr-shell,
+.qr-share,
+.confirm-shell,
+.page-shell {
+  view-transition-name: wallet-screen;
+}
+
+.home-nav,
+.sr-nav {
+  view-transition-name: wallet-nav;
+}
+
+.home-nav-balance,
+.sr-nav-balance {
+  view-transition-name: wallet-brand;
+}
+
+::view-transition-group(wallet-nav),
+::view-transition-group(wallet-brand) {
+  animation-duration: 260ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+::view-transition-old(wallet-screen),
+::view-transition-new(wallet-screen) {
+  animation-duration: 240ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+:root[data-vt-dir='forward']::view-transition-old(wallet-screen) {
+  animation-name: wallet-slide-out-left;
+}
+
+:root[data-vt-dir='forward']::view-transition-new(wallet-screen) {
+  animation-name: wallet-slide-in-right;
+}
+
+:root[data-vt-dir='back']::view-transition-old(wallet-screen) {
+  animation-name: wallet-slide-out-right;
+}
+
+:root[data-vt-dir='back']::view-transition-new(wallet-screen) {
+  animation-name: wallet-slide-in-left;
+}
+
+@keyframes wallet-slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes wallet-slide-out-left {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateX(-28px);
+  }
+}
+
+@keyframes wallet-slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-28px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes wallet-slide-out-right {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}

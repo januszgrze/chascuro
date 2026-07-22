@@ -1,0 +1,26 @@
+[package]
+name = "marmot-web-wasm"
+description = "Browser Wasm entry point for the revision-pinned Rust MDK engine."
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[package.metadata.wasm-pack.profile.release]
+# Cargo already performs the workspace release optimization. Disabling
+# wasm-opt also avoids depending on whatever Binaryen version happens to be
+# installed locally; older releases reject Rust's bulk-memory output.
+wasm-opt = false
+
+[dependencies]
+cgka-engine.workspace = true
+cgka-traits.workspace = true
+console_error_panic_hook.workspace = true
+getrandom.workspace = true
+openmls.workspace = true
+serde_json.workspace = true
+transport-web.workspace = true
+wasm-bindgen.workspace = true

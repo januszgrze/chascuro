@@ -1,0 +1,21 @@
+[package]
+name = "transport-web"
+description = "Browser-safe Nostr transport boundary for the unmodified Marmot MDK engine."
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+cgka-traits.workspace = true
+chacha20poly1305.workspace = true
+futures.workspace = true
+hex.workspace = true
+nostr.workspace = true
+rand.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio.workspace = true
+transport-nostr-peeler.workspace = true
