@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 
 import {
   classifyWalletInput,
-  formatMsatsAsSats,
+  formatCoinsCoinStandard,
+  formatMsatsCoinStandard,
   isTerminalOperationStatus,
   parsePositiveSats,
   type ClearableSecretText,
@@ -328,12 +329,11 @@ function WalletOverview({
       <div className="balance-card">
         <span className="balance-label">BALANCE</span>
         <p className="balance-amount" aria-live="polite">
-          <BitcoinMark className="amount-symbol" />
           <span className="amount-value">
-            {formatMsatsAsSats(snapshot.balanceMsats)}
+            {formatMsatsCoinStandard(snapshot.balanceMsats)}
           </span>
           <span className="visually-hidden">
-            Balance {formatMsatsAsSats(snapshot.balanceMsats)} sats
+            Balance {formatMsatsCoinStandard(snapshot.balanceMsats)}
           </span>
         </p>
       </div>
@@ -411,7 +411,7 @@ function formatSignedAmount(
     return '—';
   }
   const sign = incoming ? '+' : '−';
-  return `${sign}${formatMsatsAsSats(operation.amountMsats)}`;
+  return `${sign}${formatMsatsCoinStandard(operation.amountMsats)}`;
 }
 
 function EcashReceiveScreen({
@@ -508,7 +508,7 @@ function EcashReceiveScreen({
         amountSats={
           operation.amountMsats === undefined
             ? undefined
-            : formatMsatsAsSats(operation.amountMsats)
+            : formatMsatsCoinStandard(operation.amountMsats)
         }
       >
         <button className="cta-pay" type="button" onClick={onHome}>
@@ -526,7 +526,7 @@ function EcashReceiveScreen({
         tone="success"
         direction="in"
         title="Redeem"
-        amountSats={formatMsatsAsSats(preview.amountMsats)}
+        amountSats={formatMsatsCoinStandard(preview.amountMsats)}
         subtitle={
           preview.compatible
             ? 'Compatible with your federation'
@@ -668,8 +668,9 @@ function EcashSendScreen({
           </h1>
           {sentAmount !== undefined && (
             <p className="qr-share-amount">
-              <BitcoinMark className="amount-symbol" />
-              <span className="amount-value">{sentAmount}</span>
+              <span className="amount-value">
+                {formatCoinsCoinStandard(BigInt(sentAmount || '0'))}
+              </span>
             </p>
           )}
           {exported.secretStorage === 'memory_only' && (
@@ -859,7 +860,7 @@ function LightningReceiveScreen({
         amountSats={
           displayOperation.amountMsats === undefined
             ? undefined
-            : formatMsatsAsSats(displayOperation.amountMsats)
+            : formatMsatsCoinStandard(displayOperation.amountMsats)
         }
       >
         <button className="cta-pay" type="button" onClick={onHome}>
@@ -888,9 +889,8 @@ function LightningReceiveScreen({
         </h1>
         {displayOperation.amountMsats !== undefined && (
           <p className="qr-share-amount">
-            <BitcoinMark className="amount-symbol" />
             <span className="amount-value">
-              {formatMsatsAsSats(displayOperation.amountMsats)}
+              {formatMsatsCoinStandard(displayOperation.amountMsats)}
             </span>
           </p>
         )}
@@ -1147,7 +1147,7 @@ function LightningSendScreen({
         amountSats={
           liveOperation.amountMsats === undefined
             ? undefined
-            : formatMsatsAsSats(liveOperation.amountMsats)
+            : formatMsatsCoinStandard(liveOperation.amountMsats)
         }
         subtitle={
           unsuccessful
@@ -1188,7 +1188,7 @@ function LightningSendScreen({
     const fixedAmountLabel =
       offer.fixedAmountMsats === undefined
         ? undefined
-        : formatMsatsAsSats(offer.fixedAmountMsats);
+        : formatMsatsCoinStandard(offer.fixedAmountMsats);
     return (
       <section className="confirm-shell" aria-labelledby="lightning-send-title">
         <div className="confirm-topbar">
@@ -1223,7 +1223,6 @@ function LightningSendScreen({
           />
         ) : (
           <div className="confirm-amount">
-            <BitcoinMark className="amount-symbol" />
             <span className="amount-value">{fixedAmountLabel}</span>
           </div>
         )}
@@ -1247,7 +1246,7 @@ function LightningSendScreen({
   }
 
   if (review !== undefined) {
-    const amountLabel = formatMsatsAsSats(review.quote.amountMsats);
+    const amountLabel = formatMsatsCoinStandard(review.quote.amountMsats);
     return (
       <section className="confirm-shell" aria-labelledby="lightning-send-title">
         <div className="confirm-topbar">
@@ -1268,7 +1267,6 @@ function LightningSendScreen({
           </h1>
         </div>
         <div className="confirm-amount">
-          <BitcoinMark className="amount-symbol" />
           <span className="amount-value">{amountLabel}</span>
         </div>
         <div className="pay-card">
@@ -1287,8 +1285,7 @@ function LightningSendScreen({
           <div className="pay-row">
             <span className="pay-label">Network fee</span>
             <span className="pay-value">
-              <BitcoinMark className="btc-symbol" />{' '}
-              {formatMsatsAsSats(review.quote.feeMsats)}
+              {formatMsatsCoinStandard(review.quote.feeMsats)}
             </span>
           </div>
           <div className="pay-row">
@@ -1310,13 +1307,7 @@ function LightningSendScreen({
           onClick={() => void pay()}
         >
           <BoltIcon size={20} />
-          {busy ? (
-            'Submitting…'
-          ) : (
-            <>
-              Pay <BitcoinMark className="btc-symbol" /> {amountLabel}
-            </>
-          )}
+          {busy ? 'Submitting…' : `Pay ${amountLabel}`}
         </button>
       </section>
     );
@@ -1388,7 +1379,7 @@ function lnurlAmountError(
     return undefined;
   }
   if (amountSats === undefined || amountSats.trim().length === 0) {
-    return 'Enter a whole-satoshi amount.';
+    return 'Enter a whole-coin amount.';
   }
   try {
     const amountMsats = parsePositiveSats(amountSats);
@@ -1396,11 +1387,11 @@ function lnurlAmountError(
       amountMsats < offer.minSendableMsats ||
       amountMsats > offer.maxSendableMsats
     ) {
-      return `Choose an amount from ${formatMsatsAsSats(offer.minSendableMsats)} to ${formatMsatsAsSats(offer.maxSendableMsats)} sats.`;
+      return `Choose an amount from ${formatMsatsCoinStandard(offer.minSendableMsats)} to ${formatMsatsCoinStandard(offer.maxSendableMsats)}.`;
     }
     return undefined;
   } catch {
-    return 'Enter a whole-satoshi amount.';
+    return 'Enter a whole-coin amount.';
   }
 }
 

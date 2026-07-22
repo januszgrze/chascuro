@@ -8,6 +8,7 @@ import {
 } from 'react';
 
 import {
+  formatCoinsCoinStandard,
   sanitizeChatText,
   type ChatMessage,
   type ChatMessageId,
@@ -578,8 +579,7 @@ function PaymentCard({
           {outgoing ? 'You sent' : `${firstName} sent you`}
         </span>
         <span className="chat-payment-amount">
-          <BitcoinMark className="chat-payment-symbol" />
-          {formatSats(payment.amountSats)}
+          {formatCoinsCoinStandard(BigInt(payment.amountSats))}
         </span>
         {status === 'claimed' && (
           <span className="chat-payment-status">
@@ -747,6 +747,7 @@ function PaySheet({
   const [amount, setAmount] = useState('');
   const amountSats = amount.length === 0 ? 0 : Number.parseInt(amount, 10);
   const ready = Number.isSafeInteger(amountSats) && amountSats > 0;
+  const amountLabel = formatCoinsCoinStandard(BigInt(amountSats));
 
   function press(digit: string) {
     if (amount.length >= 15) return;
@@ -781,10 +782,9 @@ function PaySheet({
           </button>
         </div>
         <div className="chat-pay-amount">
-          <BitcoinMark className="chat-pay-symbol" />
-          <span className="chat-pay-value">{groupDigits(amount)}</span>
+          <span className="chat-pay-value">{amountLabel}</span>
           <span className="visually-hidden" role="status">
-            {groupDigits(amount)} sats entered
+            {amountLabel} entered
           </span>
         </div>
         <div className="chat-pay-note-row">
@@ -817,11 +817,6 @@ function PaySheet({
   );
 }
 
-function groupDigits(digits: string): string {
-  const normalized = digits.replace(/^0+(?=\d)/u, '') || '0';
-  return normalized.replace(/\B(?=(\d{3})+(?!\d))/gu, ',');
-}
-
 function PaySuccessSheet({
   amountSats,
   counterparty,
@@ -846,8 +841,7 @@ function PaySuccessSheet({
         </span>
         <h2 className="chat-success-title">Payment sent</h2>
         <p className="chat-success-amount">
-          <BitcoinMark className="chat-payment-symbol" />
-          {formatSats(amountSats)}
+          {formatCoinsCoinStandard(BigInt(amountSats))}
         </p>
         <p className="chat-success-to">to {counterparty}</p>
         <p className="chat-success-wait">
@@ -975,10 +969,6 @@ function deliveryLabel(message: ChatMessage, offline: boolean): string {
     case 'received':
       return 'Received';
   }
-}
-
-function formatSats(value: number): string {
-  return value.toLocaleString('en-US');
 }
 
 function initials(title: string): string {

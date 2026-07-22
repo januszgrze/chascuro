@@ -121,6 +121,54 @@ export function formatMsatsAsSats(value: Msats): string {
   return `${wholeSats.toString(10)}.${fractionalSats}`;
 }
 
+/** One bitcoin in coins (formerly satoshis). `₿ 1 = ¢ 100,000,000`. */
+export const COINS_PER_BITCOIN = 100_000_000n;
+const COINS_PER_MILLION = 1_000_000n;
+
+function formatIntegerWithCommas(value: bigint): string {
+  const digits = value.toString(10);
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/**
+ * Formats a whole-coin amount using Coin Standard prefix notation:
+ * `¢ 5,433` under one bitcoin, `₿ 1.5` at or above one bitcoin.
+ * Exact million coin amounts under one bitcoin use `¢ Nm` shorthand.
+ */
+export function formatCoinsCoinStandard(coins: bigint): string {
+  if (coins < 0n) {
+    throw new RangeError('Amount must not be negative.');
+  }
+
+  if (coins >= COINS_PER_BITCOIN) {
+    const wholeBitcoin = coins / COINS_PER_BITCOIN;
+    const remainder = coins % COINS_PER_BITCOIN;
+    if (remainder === 0n) {
+      return `₿ ${formatIntegerWithCommas(wholeBitcoin)}`;
+    }
+
+    const fractional = remainder
+      .toString(10)
+      .padStart(8, '0')
+      .replace(/0+$/, '');
+    return `₿ ${formatIntegerWithCommas(wholeBitcoin)}.${fractional}`;
+  }
+
+  if (coins >= COINS_PER_MILLION && coins % COINS_PER_MILLION === 0n) {
+    return `¢ ${formatIntegerWithCommas(coins / COINS_PER_MILLION)}m`;
+  }
+
+  return `¢ ${formatIntegerWithCommas(coins)}`;
+}
+
+/**
+ * Formats millisatoshis for UI display per the Coin Standard.
+ * Floors sub-coin (millisatoshi) remainders so ¢ amounts stay integers.
+ */
+export function formatMsatsCoinStandard(value: Msats): string {
+  return formatCoinsCoinStandard(value / MSATS_PER_SAT);
+}
+
 export function addMsats(left: Msats, right: Msats): Msats {
   return msats(left + right);
 }

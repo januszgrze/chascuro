@@ -4,7 +4,9 @@ import {
   MAX_MSATS,
   addMsats,
   deserializeMsats,
+  formatCoinsCoinStandard,
   formatMsatsAsSats,
+  formatMsatsCoinStandard,
   msats,
   msatsToSatsExact,
   parseMsats,
@@ -49,6 +51,18 @@ describe('money', () => {
     expect(formatMsatsAsSats(msats(1_001n))).toBe('1.001');
     expect(formatMsatsAsSats(msats(1_010n))).toBe('1.01');
     expect(formatMsatsAsSats(msats(1_100n))).toBe('1.1');
+  });
+
+  it('formats Coin Standard amounts with prefix ¢ and ₿', () => {
+    expect(formatMsatsCoinStandard(msats(0n))).toBe('¢ 0');
+    expect(formatMsatsCoinStandard(msats(5_433_000n))).toBe('¢ 5,433');
+    expect(formatMsatsCoinStandard(msats(1_001n))).toBe('¢ 1');
+    expect(formatCoinsCoinStandard(50_000_000n)).toBe('¢ 50m');
+    expect(formatCoinsCoinStandard(1_500_000n)).toBe('¢ 1,500,000');
+    expect(formatCoinsCoinStandard(100_000_000n)).toBe('₿ 1');
+    expect(formatCoinsCoinStandard(150_000_000n)).toBe('₿ 1.5');
+    expect(formatCoinsCoinStandard(100_000_054n)).toBe('₿ 1.00000054');
+    expect(formatMsatsCoinStandard(satsToMsats(100_000_000n))).toBe('₿ 1');
   });
 
   it('only converts to sats exactly when no remainder exists', () => {
