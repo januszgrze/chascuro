@@ -294,7 +294,7 @@ describe('HomeScreen scanned wallet input', () => {
 
     await user.click(screen.getByRole('button', { name: '5' }));
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'Choose an amount from 10 to 100 sats.',
+      'Choose an amount from ¢ 10 to ¢ 100.',
     );
     expect(
       screen.getByRole('button', { name: 'Review payment' }),
@@ -340,7 +340,7 @@ describe('HomeScreen scanned wallet input', () => {
     await user.click(screen.getByRole('button', { name: 'Continue' }));
 
     expect(screen.queryByRole('group', { name: 'Number keypad' })).toBeNull();
-    expect(screen.getAllByText('21000').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('¢ 21,000').length).toBeGreaterThan(0);
     await user.click(screen.getByRole('button', { name: 'Review payment' }));
     expect(onQuoteLnurlPayment).toHaveBeenCalledWith(
       offer.offerId,
