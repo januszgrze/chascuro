@@ -57,6 +57,23 @@
   acknowledgement that recovery is unvalidated and funds may be lost. A
   sanitized encrypted marker makes a submitted join recoverable when SDK
   success outruns profile persistence.
+- The encrypted wallet profile accepts at most three uniquely named federation
+  clients on one Bitcoin network. Existing single-federation profiles migrate
+  in place by treating the active federation as the one-entry portfolio and
+  primary federation.
+- Named federation clients share one SDK director, worker, mnemonic, and OPFS
+  database. Locking first cancels all child balance and operation
+  subscriptions, rejects callbacks from the prior generation, and then cleans
+  up the shared transport exactly once.
+- Lightning receive routing refreshes every federation balance, uses the
+  primary federation only when the combined balance is zero, and otherwise
+  selects one federation using projected equal allocation with deterministic
+  tie-breaking. It refreshes the selected client's gateway cache, explicitly
+  binds a valid vetted gateway when one is available (otherwise the first valid
+  gateway returned by the SDK), and makes exactly one invoice request;
+  selection or creation failures never fall back to a second federation.
+  Outgoing Lightning still prefers one funded federation and binds its quote to
+  that client and gateway.
 - Payment confirmation objects are bound to parsed input fingerprints, amounts,
   fees, and expiry so stale UI state cannot be resubmitted as a new intent.
 - Concurrent submissions share one controller request. Ecash redemption
@@ -118,6 +135,19 @@
   third-party executable code.
 - Fake mode tests application behavior only and must never be mistaken for live
   wallet validation.
+- The named-client constructor needed by this implementation is exported by
+  the pinned SDK's `testing` entrypoint rather than its main public director.
+  A two-federation regtest restart/OPFS lifecycle test and an upstream public
+  `createWallet(clientName)` API remain release gates.
+- The displayed balance is the portfolio total, while ecash, chat, and
+  on-chain actions still use the primary federation. Those actions can
+  therefore report insufficient funds even when the displayed total is
+  greater than the requested amount.
+- The installed SDK, Fedimint Lightning client, and gateway API expose only
+  full-invoice payment. Cross-federation partial MPP is not implemented.
+  Partial amount RPCs, capability advertisement, durable batch reconciliation,
+  multi-gateway regtest coverage, and independent review are required before
+  MPP can be added safely.
 - SDK 0.1.3 does not provide a hard maximum-fee submission argument. The adapter
   derives a quote from the selected gateway's recognized fee schedule, binds
   confirmation and submission to that exact gateway, and fails closed for

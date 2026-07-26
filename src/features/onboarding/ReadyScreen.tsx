@@ -2,9 +2,10 @@ import { CheckIcon } from '../shared/icons';
 
 interface ReadyScreenProps {
   onContinue(): void;
+  onAddFederation?(): void;
 }
 
-export function ReadyScreen({ onContinue }: ReadyScreenProps) {
+export function ReadyScreen({ onContinue, onAddFederation }: ReadyScreenProps) {
   return (
     <section className="onb-ready" aria-labelledby="ready-title">
       <div className="onb-ready-body">
@@ -14,6 +15,15 @@ export function ReadyScreen({ onContinue }: ReadyScreenProps) {
         <h1 id="ready-title">You're ready</h1>
       </div>
       <div className="onb-ready-footer">
+        {onAddFederation !== undefined && (
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={onAddFederation}
+          >
+            Add another federation
+          </button>
+        )}
         <button className="cta-pill" type="button" onClick={onContinue}>
           Go to wallet
         </button>

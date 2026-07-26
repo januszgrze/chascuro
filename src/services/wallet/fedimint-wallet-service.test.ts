@@ -24,6 +24,10 @@ import {
   sanitizeFederationPreview,
   sanitizeSdkOperation,
 } from './fedimint-wallet-service';
+import {
+  scoreProjectedEqualAllocation,
+  selectLightningReceiveFederationId,
+} from './lightning-receive-router';
 
 type ReissueState = Parameters<typeof normalizeReissueState>[0];
 type SpendState = Parameters<typeof normalizeSpendState>[0];
@@ -161,7 +165,9 @@ function attachSdkWallet(
   } as unknown as FedimintWallet;
 
   Object.assign(service as unknown as Record<string, unknown>, {
-    wallet,
+    wallets: new Map([[activeFederation.federationId, wallet]]),
+    federations: new Map([[activeFederation.federationId, activeFederation]]),
+    federationBalances: new Map([[activeFederation.federationId, msats(0n)]]),
     generation: 1,
     snapshot: Object.freeze({
       ...service.getSnapshot(),
@@ -274,6 +280,237 @@ describe('sanitizeFederationPreview', () => {
   });
 });
 
+describe('Lightning receive allocation', () => {
+  it('prefers the least-funded federation and leaves equal scores tied', () => {
+    const equal = [
+      { federationId: 'fed-b', balanceMsats: msats(10_000n) },
+      { federationId: 'fed-a', balanceMsats: msats(10_000n) },
+    ];
+    const unequal = [
+      { federationId: 'fed-a', balanceMsats: msats(18_000n) },
+      { federationId: 'fed-b', balanceMsats: msats(2_000n) },
+    ];
+
+    expect(scoreProjectedEqualAllocation(equal, 'fed-a', msats(2_000n))).toBe(
+      scoreProjectedEqualAllocation(equal, 'fed-b', msats(2_000n)),
+    );
+    expect(
+      scoreProjectedEqualAllocation(unequal, 'fed-b', msats(4_000n)),
+    ).toBeLessThan(
+      scoreProjectedEqualAllocation(unequal, 'fed-a', msats(4_000n)),
+    );
+    expect(
+      selectLightningReceiveFederationId(equal, 'fed-b', msats(2_000n)),
+    ).toBe('fed-a');
+    expect(
+      selectLightningReceiveFederationId(
+        [
+          { federationId: 'fed-a', balanceMsats: msats(0n) },
+          { federationId: 'fed-b', balanceMsats: msats(0n) },
+        ],
+        'fed-b',
+        msats(2_000n),
+      ),
+    ).toBe('fed-b');
+    expect(
+      selectLightningReceiveFederationId(
+        [{ federationId: 'fed-b', balanceMsats: msats(0n) }],
+        'fed-a',
+        msats(2_000n),
+        msats(10_000n),
+      ),
+    ).toBe('fed-b');
+  });
+
+  it('routes once to the selected client and prefers a vetted gateway', async () => {
+    const service = new FedimintWalletService();
+    const receiveStreams: CapturedStream<LightningReceiveState>[] = [];
+    const privateInvoice = 'lnbc1private-invoice-payload';
+    const additionalFederation: ActiveFederation = Object.freeze({
+      ...activeFederation,
+      federationId: federationId('fed-b'),
+      displayName: 'Additional federation',
+      clientName: clientName('2c1a7aad-9fd2-40a7-abbb-dc477c9f830f'),
+    });
+    const additionalGetBalance = vi.fn().mockResolvedValue(0);
+    const additionalCreateInvoice = vi.fn().mockResolvedValue({
+      operation_id: 'operation-private-identifier',
+      invoice: privateInvoice,
+    });
+    const additionalWallet = {
+      balance: {
+        getBalance: additionalGetBalance,
+      },
+      lightning: {
+        updateGatewayCache: vi.fn().mockResolvedValue(undefined),
+        listGateways: vi.fn().mockResolvedValue([
+          {
+            vetted: false,
+            ttl: { secs: 60, nanos: 0 },
+            info: {
+              gateway_id: 'unvetted-gateway',
+            },
+          },
+          {
+            vetted: true,
+            ttl: { secs: 60, nanos: 0 },
+            info: {
+              gateway_id: 'vetted-gateway',
+            },
+          },
+        ]),
+        createInvoice: additionalCreateInvoice,
+        subscribeLnReceive: vi.fn(
+          (
+            _operationId: string,
+            onState: (state: LightningReceiveState) => void,
+            onError: (error: string) => void,
+          ) => {
+            const stream = {
+              onState,
+              onError,
+              cancel: vi.fn(),
+            };
+            receiveStreams.push(stream);
+            return stream.cancel;
+          },
+        ),
+      },
+    } as unknown as FedimintWallet;
+    const primaryCreateInvoice = vi.fn();
+    const wallet = {
+      balance: {
+        getBalance: vi.fn().mockResolvedValue(25_000),
+      },
+      lightning: {
+        updateGatewayCache: vi.fn().mockResolvedValue(undefined),
+        listGateways: vi.fn(),
+        createInvoice: primaryCreateInvoice,
+      },
+    } as unknown as FedimintWallet;
+    Object.assign(service as unknown as Record<string, unknown>, {
+      wallets: new Map([
+        [activeFederation.federationId, wallet],
+        [additionalFederation.federationId, additionalWallet],
+      ]),
+      federations: new Map([
+        [activeFederation.federationId, activeFederation],
+        [additionalFederation.federationId, additionalFederation],
+      ]),
+      federationBalances: new Map([
+        [activeFederation.federationId, msats(25_000n)],
+        [additionalFederation.federationId, msats(0n)],
+      ]),
+      generation: 1,
+      snapshot: Object.freeze({
+        ...service.getSnapshot(),
+        lifecycle: 'ready',
+        connection: 'online',
+        activeFederation,
+      }),
+    });
+
+    const receive = await service.lightning.createInvoice({
+      amountMsats: msats(1_000n),
+      expirySeconds: 3_600,
+    });
+    receiveStreams[0]?.onState({
+      Failed: `Network failure containing ${privateInvoice}`,
+    });
+
+    expect(receive.operation.key.federationId).toBe(
+      additionalFederation.federationId,
+    );
+    expect(service.getSnapshot().operations[0]?.status).toBe('failed');
+    expect(additionalGetBalance).toHaveBeenCalledOnce();
+    expect(additionalCreateInvoice).toHaveBeenCalledOnce();
+    expect(additionalCreateInvoice).toHaveBeenCalledWith(
+      1_000,
+      '',
+      3_600,
+      { gateway_id: 'vetted-gateway' },
+      {},
+    );
+    expect(primaryCreateInvoice).not.toHaveBeenCalled();
+    expect(
+      JSON.stringify(service.getSnapshot().operations, (_key, value) =>
+        typeof value === 'bigint' ? value.toString() : value,
+      ),
+    ).not.toContain(privateInvoice);
+    receive.invoice.clear();
+  });
+
+  it('does not create a second invoice when the selected route fails', async () => {
+    const service = new FedimintWalletService();
+    const additionalFederation: ActiveFederation = Object.freeze({
+      ...activeFederation,
+      federationId: federationId('fed-b'),
+      displayName: 'Additional federation',
+      clientName: clientName('2c1a7aad-9fd2-40a7-abbb-dc477c9f830f'),
+    });
+    const primaryCreateInvoice = vi.fn();
+    const selectedCreateInvoice = vi
+      .fn()
+      .mockRejectedValue(new Error('selected gateway failed'));
+    const wallet = {
+      balance: {
+        getBalance: vi.fn().mockResolvedValue(25_000),
+      },
+      lightning: {
+        updateGatewayCache: vi.fn(),
+        listGateways: vi.fn(),
+        createInvoice: primaryCreateInvoice,
+      },
+    } as unknown as FedimintWallet;
+    const additionalWallet = {
+      balance: {
+        getBalance: vi.fn().mockResolvedValue(0),
+      },
+      lightning: {
+        updateGatewayCache: vi.fn().mockResolvedValue(undefined),
+        listGateways: vi.fn().mockResolvedValue([
+          {
+            info: {
+              gateway_id: 'selected-gateway',
+            },
+          },
+        ]),
+        createInvoice: selectedCreateInvoice,
+      },
+    } as unknown as FedimintWallet;
+    Object.assign(service as unknown as Record<string, unknown>, {
+      wallets: new Map([
+        [activeFederation.federationId, wallet],
+        [additionalFederation.federationId, additionalWallet],
+      ]),
+      federations: new Map([
+        [activeFederation.federationId, activeFederation],
+        [additionalFederation.federationId, additionalFederation],
+      ]),
+      federationBalances: new Map([
+        [activeFederation.federationId, msats(25_000n)],
+        [additionalFederation.federationId, msats(0n)],
+      ]),
+      generation: 1,
+      snapshot: Object.freeze({
+        ...service.getSnapshot(),
+        lifecycle: 'ready',
+        connection: 'online',
+        activeFederation,
+      }),
+    });
+
+    await expect(
+      service.lightning.createInvoice({
+        amountMsats: msats(1_000n),
+        expirySeconds: 3_600,
+      }),
+    ).rejects.toMatchObject({ code: 'operation_failed' });
+    expect(selectedCreateInvoice).toHaveBeenCalledOnce();
+    expect(primaryCreateInvoice).not.toHaveBeenCalled();
+  });
+});
+
 describe('Fedimint SDK state normalization', () => {
   it('maps exact ecash and Lightning receive states conservatively', () => {
     expect(normalizeReissueState('Created')).toBe('created');
@@ -292,6 +529,14 @@ describe('Fedimint SDK state normalization', () => {
     ).toBe('awaiting_external_payment');
     expect(normalizeLnReceiveState('awaiting_funds')).toBe('pending');
     expect(normalizeLnReceiveState('claimed')).toBe('settled');
+    expect(
+      normalizeLnReceiveState({
+        Claimed: { btc_deposited: 1, btc_out_point: {} },
+      }),
+    ).toBe('settled');
+    expect(normalizeLnReceiveState({ Failed: 'gateway rejected' })).toBe(
+      'failed',
+    );
     expect(normalizeLnReceiveState({ canceled: { reason: 'expired' } })).toBe(
       'cancelled',
     );
@@ -479,7 +724,16 @@ describe('Fedimint Lightning payment boundary', () => {
       }),
     };
     Object.assign(service as unknown as Record<string, unknown>, {
-      wallet,
+      wallets: new Map([[activeFederation.federationId, wallet]]),
+      federations: new Map([
+        [
+          activeFederation.federationId,
+          { ...activeFederation, network: 'unknown' },
+        ],
+      ]),
+      federationBalances: new Map([
+        [activeFederation.federationId, msats(200_000n)],
+      ]),
       director,
       generation: 1,
       snapshot: Object.freeze({

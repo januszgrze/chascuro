@@ -1,5 +1,6 @@
 import {
   approveFederationJoin,
+  clientName,
   confirmEcashRedeem,
   confirmEcashSpend,
   confirmLightningQuote,
@@ -436,11 +437,15 @@ export class WalletAppController {
       this.update({ phase: 'opening', busy: 'unlock', error: undefined });
       await this.service.open({
         activeFederation: record.activeFederation,
+        federations: record.federations,
         signal: token.signal,
       });
       if (
-        record.activeFederation === undefined &&
-        pendingJoinRecord !== undefined
+        pendingJoinRecord !== undefined &&
+        !record.federations.some(
+          (federation) =>
+            federation.federationId === pendingJoinRecord.payload.federationId,
+        )
       ) {
         const pending = pendingJoinRecord.payload;
         const reconciled = await this.service.federation.reconcilePendingJoin(
@@ -450,6 +455,9 @@ export class WalletAppController {
             network: normalizeBitcoinNetwork(pending.network),
             modules: pending.modules,
             guardianCount: pending.guardianCount,
+            ...(pending.clientName === undefined
+              ? {}
+              : { clientName: clientName(pending.clientName) }),
           },
           token.signal,
         );
@@ -457,14 +465,21 @@ export class WalletAppController {
           profile = createWalletProfileV2(record.mode, {
             adapterVersion: profile.adapterVersion,
             identity: profile.identity,
-            activeFederation: reconciled,
+            activeFederation: record.activeFederation ?? reconciled,
+            primaryFederationId:
+              record.primaryFederationId ?? reconciled.federationId,
+            federations: [...record.federations, reconciled],
           });
           await records.put(walletProfileV2Schema, WALLET_RECORD_ID, profile);
           record = readWalletProfileV2(profile);
         } else {
           throw new WalletError('operation_reconciliation_required');
         }
-        if (record.activeFederation !== undefined) {
+        if (
+          record.federations.some(
+            (federation) => federation.federationId === pending.federationId,
+          )
+        ) {
           try {
             await records.delete(
               pendingFederationJoinRecordSchema,
@@ -475,10 +490,7 @@ export class WalletAppController {
             // durable; retry deletion on the next unlock.
           }
         }
-      } else if (
-        record.activeFederation !== undefined &&
-        pendingJoinRecord !== undefined
-      ) {
+      } else if (pendingJoinRecord !== undefined) {
         try {
           await records.delete(
             pendingFederationJoinRecordSchema,
@@ -1346,6 +1358,22 @@ export class WalletAppController {
     });
   }
 
+  addAnotherFederation(): void {
+    if (
+      this.state.phase !== 'home' ||
+      this.state.busy !== undefined ||
+      this.state.walletSnapshot.connectedFederations.length < 1 ||
+      this.state.walletSnapshot.connectedFederations.length >= 3
+    ) {
+      return;
+    }
+    this.update({
+      phase: 'invite',
+      candidate: undefined,
+      error: undefined,
+    });
+  }
+
   joinFederation(
     trustAcknowledged: boolean,
     mainnetRiskAcknowledged = false,
@@ -1734,13 +1762,13 @@ export class WalletAppController {
       throw new TypeError('Encrypted profile is unavailable.');
     }
 
+    const record = readWalletProfileV2(profile);
     const nextProfile = createWalletProfileV2(this.service.kind, {
       adapterVersion: profile.adapterVersion,
       identity,
-      activeFederation:
-        profile.activeFederation === undefined
-          ? undefined
-          : readWalletProfileV2(profile).activeFederation,
+      activeFederation: record.activeFederation,
+      primaryFederationId: record.primaryFederationId,
+      federations: record.federations,
     });
     await records.put(walletProfileV2Schema, WALLET_RECORD_ID, nextProfile);
     this.profile = nextProfile;
@@ -1790,6 +1818,26 @@ export class WalletAppController {
         this.now(),
         mainnetRiskAcknowledged,
       );
+      const currentRecord = readWalletProfileV2(profile);
+      if (currentRecord.federations.length >= 3) {
+        throw new RangeError('Federation portfolio is full.');
+      }
+      if (
+        currentRecord.federations.some(
+          (federation) => federation.federationId === candidate.federationId,
+        )
+      ) {
+        throw new RangeError('Federation is already joined.');
+      }
+      if (
+        currentRecord.activeFederation !== undefined &&
+        currentRecord.activeFederation.network !== candidate.network
+      ) {
+        throw new RangeError(
+          'Federation network does not match the portfolio.',
+        );
+      }
+      const requestedClientName = clientName(crypto.randomUUID());
       await records.put(
         pendingFederationJoinRecordSchema,
         PENDING_FEDERATION_JOIN_RECORD_ID,
@@ -1800,6 +1848,7 @@ export class WalletAppController {
           network: candidate.network,
           modules: candidate.modules,
           guardianCount: candidate.guardianCount,
+          clientName: requestedClientName,
           submittedAtMs: this.now(),
         },
       );
@@ -1807,6 +1856,7 @@ export class WalletAppController {
       const activeFederation = await this.service.federation.join(
         approval,
         token.signal,
+        requestedClientName,
       );
       if (!this.guard.isCurrent(token)) {
         return;
@@ -1819,7 +1869,10 @@ export class WalletAppController {
       const nextProfile = createWalletProfileV2(this.service.kind, {
         adapterVersion: profile.adapterVersion,
         identity: profile.identity,
-        activeFederation,
+        activeFederation: currentRecord.activeFederation ?? activeFederation,
+        primaryFederationId:
+          currentRecord.primaryFederationId ?? activeFederation.federationId,
+        federations: [...currentRecord.federations, activeFederation],
       });
       await records.put(walletProfileV2Schema, WALLET_RECORD_ID, nextProfile);
       try {
@@ -1856,7 +1909,7 @@ export class WalletAppController {
           busy: undefined,
           error:
             error instanceof RangeError
-              ? publicWalletError('candidate_expired').message
+              ? publicWalletError('invalid_input').message
               : error instanceof TypeError
                 ? publicWalletError('storage_unavailable').message
                 : toPublicWalletError(error).message,

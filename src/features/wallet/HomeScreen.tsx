@@ -1912,6 +1912,28 @@ function SettingsScreen({
               <dd>{snapshot.activeFederation?.network ?? 'unknown'}</dd>
             </div>
             <div>
+              <dt>Connected federations</dt>
+              <dd>{snapshot.connectedFederations.length}</dd>
+            </div>
+            {snapshot.connectedFederations.map((federation, index) => (
+              <div key={federation.federationId}>
+                <dt>
+                  {federation.federationId ===
+                  snapshot.activeFederation?.federationId
+                    ? 'Primary federation'
+                    : `Federation ${index + 1}`}
+                </dt>
+                <dd className="federation-detail">
+                  <span className="federation-detail-name">
+                    {federation.displayName}
+                  </span>
+                  <span className="federation-detail-balance">
+                    {formatMsatsAsSats(federation.balanceMsats)} sats
+                  </span>
+                </dd>
+              </div>
+            ))}
+            <div>
               <dt>Recovery</dt>
               <dd>{snapshot.capabilities?.recovery ?? 'unknown'}</dd>
             </div>

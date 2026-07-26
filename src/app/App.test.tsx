@@ -346,6 +346,27 @@ describe('WalletApp federation flow', () => {
     expect(screen.getByRole('button', { name: 'Send' })).toBeVisible();
   });
 
+  it('offers the onboarding-only loop for adding another federation', async () => {
+    const harness = await renderUnlockedApp();
+    const joinSpy = await previewFederation(harness);
+
+    await harness.user.click(
+      screen.getByRole('button', { name: 'Join federation' }),
+    );
+    await screen.findByRole('heading', { name: "You're ready" });
+    await harness.user.click(
+      screen.getByRole('button', { name: 'Add another federation' }),
+    );
+
+    expect(
+      await screen.findByRole('heading', { name: 'Choose a federation' }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole('region', { name: 'Wallet home' }),
+    ).not.toBeInTheDocument();
+    expect(joinSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('suppresses a double join submission', async () => {
     const harness = await renderUnlockedApp(10);
     const joinSpy = await previewFederation(harness);

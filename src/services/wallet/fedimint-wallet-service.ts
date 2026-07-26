@@ -3,6 +3,7 @@ import {
   type FedimintWallet,
   type GatewayInfo,
 } from '@fedimint/core';
+import { FedimintWallet as ClientScopedFedimintWallet } from '@fedimint/core/testing';
 import { WasmWorkerTransport } from '@fedimint/transport-web';
 
 import {
@@ -25,6 +26,7 @@ import {
   type ConfirmedEcashRedeem,
   type ConfirmedEcashSpend,
   type ConfirmedLightningQuote,
+  type ClientName,
   type EcashExport,
   type EcashPreview,
   type FederationCandidate,
@@ -72,16 +74,18 @@ import {
   trackedOperation,
   type SdkOperationFlow,
 } from './fedimint-wallet-helpers';
-import type {
-  OpenWalletInput,
-  OperationCursor,
-  OperationListener,
-  OperationPage,
-  ReconciliationResult,
-  WalletService,
-  WalletSnapshot,
-  WalletSnapshotListener,
+import {
+  summarizeConnectedFederations,
+  type OpenWalletInput,
+  type OperationCursor,
+  type OperationListener,
+  type OperationPage,
+  type ReconciliationResult,
+  type WalletService,
+  type WalletSnapshot,
+  type WalletSnapshotListener,
 } from './wallet-service';
+import { selectLightningReceiveFederationId } from './lightning-receive-router';
 
 export {
   normalizeInternalPayState,
@@ -97,8 +101,8 @@ export {
 } from './fedimint-wallet-helpers';
 
 // In SDK 0.1.3, services are constructed against this default name even when
-// open/join receives a custom name. Keep the compatibility spike on one client
-// until the SDK exposes a consistently client-scoped constructor.
+// open/join receives a custom name. The adapter constructs every wallet with
+// its persisted client name until the public director exposes that parameter.
 export const SDK_DEFAULT_CLIENT_NAME = 'dd5135b2-c228-41b7-a4f9-3b6e7afe3088';
 
 /**
@@ -107,6 +111,17 @@ export const SDK_DEFAULT_CLIENT_NAME = 'dd5135b2-c228-41b7-a4f9-3b6e7afe3088';
  * the adapter rather than patching node_modules.
  */
 class FedimintWebWalletDirector extends WalletDirector {
+  /**
+   * SDK 0.1.3 exposes the constructor only from its pinned testing entrypoint,
+   * while production `createWallet()` always binds services to the default
+   * client. Isolate that packaging gap here until the public director accepts
+   * a client name.
+   */
+  async createNamedWallet(name: ClientName): Promise<FedimintWallet> {
+    await this.initialize();
+    return new ClientScopedFedimintWallet(this._client, name);
+  }
+
   async parseBolt11InvoicePayload(invoice: string): Promise<unknown> {
     await this.initialize();
     return this._client.sendSingleMessage('parse_bolt11_invoice', { invoice });
@@ -121,6 +136,13 @@ interface PendingCandidate {
 interface PendingLightningQuote {
   readonly quote: LightningQuote;
   readonly invoice: SensitiveInput;
+  readonly gateway: GatewayInfo;
+  readonly federationId: ActiveFederation['federationId'];
+}
+
+interface LightningReceiveRoute {
+  readonly federation: ActiveFederation;
+  readonly wallet: FedimintWallet;
   readonly gateway: GatewayInfo;
 }
 
@@ -157,9 +179,11 @@ export class FedimintWalletService implements WalletService {
     join: (
       approval: FederationJoinApproval,
       signal?: AbortSignal,
-    ): Promise<ActiveFederation> => this.joinFederation(approval, signal),
+      requestedClientName?: ClientName,
+    ): Promise<ActiveFederation> =>
+      this.joinFederation(approval, signal, requestedClientName),
     reconcilePendingJoin: (
-      pending: FederationDescriptor,
+      pending: FederationDescriptor & { readonly clientName?: ClientName },
       signal?: AbortSignal,
     ): Promise<ActiveFederation | undefined> =>
       this.reconcilePendingJoin(pending, signal),
@@ -265,8 +289,10 @@ export class FedimintWalletService implements WalletService {
   private readonly internallyTrackedOperations = new Set<string>();
   private readonly recoveryListeners = new Set<RecoveryListener>();
   private director: FedimintWebWalletDirector | undefined;
-  private wallet: FedimintWallet | undefined;
-  private cancelBalanceSubscription: (() => void) | undefined;
+  private readonly wallets = new Map<string, FedimintWallet>();
+  private readonly federations = new Map<string, ActiveFederation>();
+  private readonly federationBalances = new Map<string, Msats>();
+  private readonly cancelBalanceSubscriptions = new Map<string, () => void>();
   private cancelRecoverySubscription: (() => void) | undefined;
   private joinInFlight:
     | {
@@ -288,7 +314,7 @@ export class FedimintWalletService implements WalletService {
     }
 
     const generation = ++this.generation;
-    let createdWallet: FedimintWallet | undefined;
+    let cleanupWallet: FedimintWallet | undefined;
     let handedToService = false;
     this.setSnapshot({
       lifecycle: 'opening',
@@ -307,52 +333,71 @@ export class FedimintWalletService implements WalletService {
       await director.initialize();
       input.signal?.throwIfAborted();
 
-      const wallet = await director.createWallet();
-      createdWallet = wallet;
-      if (input.activeFederation !== undefined) {
-        if (input.activeFederation.clientName !== SDK_DEFAULT_CLIENT_NAME) {
-          throw new WalletError('sdk_unavailable');
-        }
-        const opened = await wallet.open();
+      const restoredFederations = [
+        ...(input.federations ??
+          (input.activeFederation === undefined
+            ? []
+            : [input.activeFederation])),
+      ];
+      const openedWallets = new Map<string, FedimintWallet>();
+      const balances = new Map<string, Msats>();
+      for (const federation of restoredFederations) {
+        input.signal?.throwIfAborted();
+        const wallet = await director.createNamedWallet(federation.clientName);
+        cleanupWallet ??= wallet;
+        const opened = await wallet.open(federation.clientName);
         if (!opened) {
           throw new WalletError('sdk_unavailable');
         }
+        openedWallets.set(federation.federationId, wallet);
+        balances.set(federation.federationId, await this.readBalance(wallet));
       }
 
       if (generation !== this.generation) {
-        await wallet.cleanup();
+        await cleanupWallet?.cleanup();
         return;
       }
 
       this.director = director;
-      this.wallet = wallet;
+      this.wallets.clear();
+      this.federations.clear();
+      this.federationBalances.clear();
+      for (const federation of restoredFederations) {
+        const wallet = openedWallets.get(federation.federationId);
+        const balance = balances.get(federation.federationId);
+        if (wallet === undefined || balance === undefined) {
+          throw new WalletError('sdk_unavailable');
+        }
+        this.wallets.set(federation.federationId, wallet);
+        this.federations.set(federation.federationId, federation);
+        this.federationBalances.set(federation.federationId, balance);
+      }
+      const primaryFederation =
+        input.activeFederation ?? restoredFederations[0];
       handedToService = true;
-
-      const balanceMsats =
-        input.activeFederation === undefined
-          ? msats(0n)
-          : await this.readBalance(wallet);
 
       this.setSnapshot({
         lifecycle: 'ready',
-        connection: input.activeFederation === undefined ? 'unknown' : 'online',
-        activeFederation: input.activeFederation,
-        balanceMsats,
+        connection: primaryFederation === undefined ? 'unknown' : 'online',
+        activeFederation: primaryFederation,
+        balanceMsats: this.combinedBalance(),
       });
 
-      if (input.activeFederation !== undefined) {
-        this.subscribeToBalance(wallet, generation);
+      for (const federation of restoredFederations) {
+        const wallet = this.wallets.get(federation.federationId);
+        if (wallet !== undefined) {
+          this.subscribeToBalance(federation, wallet, generation);
+        }
       }
     } catch (error) {
-      if (this.wallet === createdWallet) {
-        this.cancelBalanceSubscription?.();
-        this.cancelBalanceSubscription = undefined;
-        this.wallet = undefined;
-        this.director = undefined;
-      }
+      this.cancelAllBalanceSubscriptions();
+      this.wallets.clear();
+      this.federations.clear();
+      this.federationBalances.clear();
+      this.director = undefined;
       if (!handedToService || generation === this.generation) {
         try {
-          await createdWallet?.cleanup();
+          await cleanupWallet?.cleanup();
         } catch {
           // Preserve the original initialization/open error. The next attempt
           // creates a fresh one-shot director and worker.
@@ -376,8 +421,7 @@ export class FedimintWalletService implements WalletService {
 
   async close(): Promise<void> {
     this.generation += 1;
-    this.cancelBalanceSubscription?.();
-    this.cancelBalanceSubscription = undefined;
+    this.cancelAllBalanceSubscriptions();
     this.cancelRecoverySubscription?.();
     this.cancelRecoverySubscription = undefined;
     for (const [mapKey, subscription] of [
@@ -396,12 +440,14 @@ export class FedimintWalletService implements WalletService {
     this.submittedLightningQuotes.clear();
     this.joinInFlight = undefined;
 
-    const wallet = this.wallet;
-    this.wallet = undefined;
+    const cleanupWallet = this.wallets.values().next().value;
+    this.wallets.clear();
+    this.federations.clear();
+    this.federationBalances.clear();
     this.director = undefined;
 
     try {
-      await wallet?.cleanup();
+      await cleanupWallet?.cleanup();
     } finally {
       this.setSnapshot({
         lifecycle: 'closed',
@@ -453,14 +499,64 @@ export class FedimintWalletService implements WalletService {
   private async getCapabilities(
     signal?: AbortSignal,
   ): Promise<FederationCapabilities> {
-    const wallet = this.requireWallet();
-    const federation = this.snapshot.activeFederation;
-    if (federation === undefined) {
+    if (this.federations.size === 0) {
       throw new WalletError('wallet_locked');
     }
 
+    const primaryFederation = this.requireActiveFederation();
     const generation = this.generation;
     signal?.throwIfAborted();
+    const entries = await Promise.all(
+      [...this.federations.values()].map(async (federation) => {
+        const wallet = this.wallets.get(federation.federationId);
+        if (wallet === undefined) {
+          throw new WalletError('sdk_unavailable');
+        }
+        return {
+          federationId: federation.federationId,
+          capabilities: await this.readCapabilities(federation, wallet),
+        };
+      }),
+    );
+    signal?.throwIfAborted();
+    this.assertGeneration(generation);
+    const primaryCapabilities = entries.find(
+      (entry) => entry.federationId === primaryFederation.federationId,
+    )?.capabilities;
+    if (primaryCapabilities === undefined) {
+      throw new WalletError('sdk_unavailable');
+    }
+    const capabilities = entries.map((entry) => entry.capabilities);
+    const combined: FederationCapabilities = Object.freeze({
+      mint: primaryCapabilities.mint,
+      lightning: capabilities.some((entry) => entry.lightning),
+      onchain: primaryCapabilities.onchain,
+      gatewayAvailable: capabilities.some((entry) => entry.gatewayAvailable),
+      recovery: 'unknown',
+      lightningSend: capabilities.some(
+        (entry) => entry.lightningSend === 'enabled',
+      )
+        ? 'enabled'
+        : capabilities.some(
+              (entry) =>
+                entry.lightningSend === 'disabled_fee_quote_unavailable',
+            )
+          ? 'disabled_fee_quote_unavailable'
+          : capabilities.some(
+                (entry) =>
+                  entry.lightningSend === 'disabled_gateway_unavailable',
+              )
+            ? 'disabled_gateway_unavailable'
+            : 'unsupported',
+    });
+    this.setSnapshot({ ...this.snapshot, capabilities: combined });
+    return combined;
+  }
+
+  private async readCapabilities(
+    federation: ActiveFederation,
+    wallet: FedimintWallet,
+  ): Promise<FederationCapabilities> {
     const lightning = federation.modules.includes('ln');
     let gatewayAvailable = false;
     let feeQuoteAvailable = false;
@@ -480,10 +576,7 @@ export class FedimintWalletService implements WalletService {
         gatewayAvailable = false;
       }
     }
-    signal?.throwIfAborted();
-    this.assertGeneration(generation);
-
-    const capabilities: FederationCapabilities = Object.freeze({
+    return Object.freeze({
       mint: federation.modules.includes('mint'),
       lightning,
       onchain: federation.modules.includes('wallet'),
@@ -497,11 +590,6 @@ export class FedimintWalletService implements WalletService {
             ? 'enabled'
             : 'disabled_fee_quote_unavailable',
     });
-    this.setSnapshot({
-      ...this.snapshot,
-      capabilities,
-    });
-    return capabilities;
   }
 
   private async parseEcash(
@@ -742,8 +830,6 @@ export class FedimintWalletService implements WalletService {
     intent: LightningReceiveIntent,
     signal?: AbortSignal,
   ): Promise<LightningReceive> {
-    const wallet = this.requireWallet();
-    const federation = this.requireActiveFederation();
     if (
       intent.amountMsats === 0n ||
       !Number.isSafeInteger(intent.expirySeconds) ||
@@ -754,33 +840,25 @@ export class FedimintWalletService implements WalletService {
 
     const generation = this.generation;
     signal?.throwIfAborted();
-    let gateways;
-    try {
-      await wallet.lightning.updateGatewayCache();
-      gateways = await wallet.lightning.listGateways();
-    } catch {
-      throw new WalletError('gateway_unavailable');
-    }
-    const gateway =
-      gateways.find((candidate) => candidate.vetted)?.info ?? gateways[0]?.info;
-    if (
-      gateway === undefined ||
-      typeof gateway.gateway_id !== 'string' ||
-      gateway.gateway_id.length === 0
-    ) {
-      throw new WalletError('gateway_unavailable');
-    }
+    const route = await this.selectLightningReceiveRoute(
+      intent.amountMsats,
+      signal,
+      generation,
+    );
+    signal?.throwIfAborted();
 
     let response: { operation_id: string; invoice: string };
     try {
-      response = await wallet.lightning.createInvoice(
+      response = await route.wallet.lightning.createInvoice(
         checkedMsatsToSdkNumber(intent.amountMsats),
         intent.description ?? '',
         intent.expirySeconds,
-        gateway,
+        route.gateway,
         {},
       );
     } catch {
+      signal?.throwIfAborted();
+      this.assertGeneration(generation);
       throw new WalletError('operation_failed');
     }
     this.assertGeneration(generation);
@@ -798,7 +876,7 @@ export class FedimintWalletService implements WalletService {
       `secret:lightning-invoice:${response.operation_id}`,
     );
     const operation = this.recordOperation({
-      federationId: federation.federationId,
+      federationId: route.federation.federationId,
       sdkOperationId: response.operation_id,
       kind: 'lightning_receive',
       direction: 'incoming',
@@ -808,7 +886,7 @@ export class FedimintWalletService implements WalletService {
       secretRecordRef: recordRef,
       localDescription: intent.description,
     });
-    this.trackSdkOperation(wallet, operation, generation);
+    this.trackSdkOperation(route.wallet, operation, generation);
 
     return Object.freeze({
       operation,
@@ -818,57 +896,186 @@ export class FedimintWalletService implements WalletService {
     });
   }
 
+  private async selectLightningReceiveRoute(
+    amountMsats: Msats,
+    signal?: AbortSignal,
+    generation = this.generation,
+  ): Promise<LightningReceiveRoute> {
+    const primaryFederation = this.requireActiveFederation();
+    const available = await Promise.all(
+      [...this.federations.values()].map(async (federation) => {
+        signal?.throwIfAborted();
+        const wallet = this.wallets.get(federation.federationId);
+        if (wallet === undefined) {
+          throw new WalletError('sdk_unavailable');
+        }
+        const balanceMsats = await this.readBalance(wallet);
+        return Object.freeze({ federation, wallet, balanceMsats });
+      }),
+    );
+
+    signal?.throwIfAborted();
+    this.assertGeneration(generation);
+    for (const entry of available) {
+      this.federationBalances.set(
+        entry.federation.federationId,
+        entry.balanceMsats,
+      );
+    }
+    this.setSnapshot({ balanceMsats: this.combinedBalance() });
+
+    const receivable = available.filter((entry) =>
+      entry.federation.modules.includes('ln'),
+    );
+    const selectedFederationId = selectLightningReceiveFederationId(
+      receivable.map((entry) => ({
+        federationId: entry.federation.federationId,
+        balanceMsats: entry.balanceMsats,
+      })),
+      primaryFederation.federationId,
+      amountMsats,
+      this.combinedBalance(),
+    );
+    const selected = receivable.find(
+      (entry) => entry.federation.federationId === selectedFederationId,
+    );
+    if (selected === undefined) {
+      throw new WalletError('gateway_unavailable');
+    }
+
+    try {
+      await selected.wallet.lightning.updateGatewayCache();
+      signal?.throwIfAborted();
+      this.assertGeneration(generation);
+      const gateways = await selected.wallet.lightning.listGateways();
+      const usableGateways = gateways.filter(
+        (candidate) =>
+          typeof candidate?.info?.gateway_id === 'string' &&
+          candidate.info.gateway_id.length > 0,
+      );
+      const selectedGateway =
+        usableGateways.find((candidate) => candidate.vetted) ??
+        usableGateways[0];
+      const gateway = selectedGateway?.info;
+      if (gateway === undefined) {
+        throw new WalletError('gateway_unavailable');
+      }
+      signal?.throwIfAborted();
+      this.assertGeneration(generation);
+      return Object.freeze({
+        federation: selected.federation,
+        wallet: selected.wallet,
+        gateway,
+      });
+    } catch (error) {
+      signal?.throwIfAborted();
+      this.assertGeneration(generation);
+      if (error instanceof WalletError) {
+        throw error;
+      }
+      throw new WalletError('gateway_unavailable');
+    }
+  }
+
   private async quoteLightningPayment(
     intent: LightningPaymentIntent,
     signal?: AbortSignal,
   ): Promise<LightningQuote> {
-    const wallet = this.requireWallet();
-    const federation = this.requireActiveFederation();
+    const primaryFederation = this.requireActiveFederation();
     const parsed = this.parsedLightningInvoices.get(intent.preview.fingerprint);
     if (
       parsed === undefined ||
       parsed.preview.amountMsats === undefined ||
       parsed.preview.amountMsats !== intent.preview.amountMsats ||
       parsed.preview.expiresAtMs <= Date.now() ||
-      !isInvoiceNetworkCompatible(intent.preview.network, federation.network)
+      !isInvoiceNetworkCompatible(
+        intent.preview.network,
+        primaryFederation.network,
+      )
     ) {
       throw new WalletError('invalid_input');
     }
     if (intent.maximumFeeMsats < 0n) {
       throw new WalletError('invalid_input');
     }
+    const generation = this.generation;
     signal?.throwIfAborted();
-    let gateways;
-    try {
-      await wallet.lightning.updateGatewayCache();
-      gateways = await wallet.lightning.listGateways();
-    } catch {
-      throw new WalletError('gateway_unavailable');
+    const quotedCandidates = (
+      await Promise.all(
+        [...this.federations.values()].map(async (federation) => {
+          signal?.throwIfAborted();
+          if (!federation.modules.includes('ln')) {
+            return [];
+          }
+          const wallet = this.wallets.get(federation.federationId);
+          if (wallet === undefined) {
+            return [];
+          }
+          try {
+            await wallet.lightning.updateGatewayCache();
+            const gateways = await wallet.lightning.listGateways();
+            return gateways
+              .map((gateway) => {
+                const info = gateway?.info;
+                const feeMsats = quoteGatewayFee(
+                  info,
+                  intent.preview.amountMsats!,
+                );
+                if (info === undefined || feeMsats === undefined) {
+                  return undefined;
+                }
+                const balance =
+                  this.federationBalances.get(federation.federationId) ?? 0n;
+                return {
+                  federation,
+                  info,
+                  feeMsats,
+                  balance,
+                  vetted: gateway.vetted === true,
+                };
+              })
+              .filter((candidate) => candidate !== undefined);
+          } catch {
+            return [];
+          }
+        }),
+      )
+    ).flat();
+    signal?.throwIfAborted();
+    this.assertGeneration(generation);
+    if (quotedCandidates.length === 0) {
+      throw new WalletError('fee_quote_unavailable');
     }
-    const candidates = gateways
-      .map((gateway) => {
-        const info = gateway?.info;
-        const feeMsats = quoteGatewayFee(info, intent.preview.amountMsats!);
-        return info === undefined || feeMsats === undefined
-          ? undefined
-          : { info, feeMsats, vetted: gateway.vetted === true };
-      })
+    const withinFeeLimit = quotedCandidates.filter(
+      (candidate) => candidate.feeMsats <= intent.maximumFeeMsats,
+    );
+    if (withinFeeLimit.length === 0) {
+      throw new WalletError('fee_limit_exceeded');
+    }
+    const candidates = withinFeeLimit
+      .filter(
+        (candidate) =>
+          candidate.balance >= intent.preview.amountMsats! + candidate.feeMsats,
+      )
       .filter((candidate) => candidate !== undefined)
       .sort(
         (left, right) =>
           Number(right.vetted) - Number(left.vetted) ||
-          (left.feeMsats < right.feeMsats
+          (left.balance > right.balance
             ? -1
-            : left.feeMsats > right.feeMsats
+            : left.balance < right.balance
               ? 1
-              : 0),
+              : left.feeMsats < right.feeMsats
+                ? -1
+                : left.feeMsats > right.feeMsats
+                  ? 1
+                  : left.federation.federationId.localeCompare(
+                      right.federation.federationId,
+                    )),
       );
     const selected = candidates[0];
     if (selected === undefined) {
-      throw new WalletError('fee_quote_unavailable');
-    }
-    if (selected.feeMsats > intent.maximumFeeMsats) {
-      throw new WalletError('fee_limit_exceeded');
+      throw new WalletError('insufficient_balance');
     }
 
     const quote: LightningQuote = Object.freeze({
@@ -884,6 +1091,7 @@ export class FedimintWalletService implements WalletService {
       quote,
       invoice: parsed.invoice,
       gateway: selected.info,
+      federationId: selected.federation.federationId,
     });
     return quote;
   }
@@ -898,8 +1106,6 @@ export class FedimintWalletService implements WalletService {
     if (duplicate !== undefined) {
       return duplicate;
     }
-    const wallet = this.requireWallet();
-    const federation = this.requireActiveFederation();
     const pending = this.lightningQuotes.get(confirmed.quote.quoteId);
     if (
       pending === undefined ||
@@ -908,6 +1114,11 @@ export class FedimintWalletService implements WalletService {
       pending.quote.feeMsats > confirmed.quote.maximumFeeMsats
     ) {
       throw new WalletError('fee_quote_unavailable');
+    }
+    const wallet = this.wallets.get(pending.federationId);
+    const federation = this.federations.get(pending.federationId);
+    if (wallet === undefined || federation === undefined) {
+      throw new WalletError('operation_reconciliation_required');
     }
     signal?.throwIfAborted();
     const generation = this.generation;
@@ -1004,6 +1215,7 @@ export class FedimintWalletService implements WalletService {
   async joinFederation(
     approval: FederationJoinApproval,
     signal?: AbortSignal,
+    requestedClientName?: ClientName,
   ): Promise<ActiveFederation> {
     if (this.joinInFlight?.candidateId === approval.candidateId) {
       return this.joinInFlight.promise;
@@ -1013,7 +1225,6 @@ export class FedimintWalletService implements WalletService {
       throw new WalletError('wallet_busy');
     }
 
-    const wallet = this.requireWallet();
     const pending = this.candidates.get(approval.candidateId);
 
     if (
@@ -1023,7 +1234,14 @@ export class FedimintWalletService implements WalletService {
       throw new WalletError('candidate_expired');
     }
 
-    const promise = this.performJoin(wallet, pending, signal);
+    const name =
+      requestedClientName ??
+      clientName(
+        this.federations.size === 0
+          ? SDK_DEFAULT_CLIENT_NAME
+          : crypto.randomUUID(),
+      );
+    const promise = this.performJoin(pending, name, signal);
     this.joinInFlight = {
       candidateId: approval.candidateId,
       promise,
@@ -1039,11 +1257,12 @@ export class FedimintWalletService implements WalletService {
   }
 
   private async performJoin(
-    wallet: FedimintWallet,
     pending: PendingCandidate,
+    name: ClientName,
     signal?: AbortSignal,
   ): Promise<ActiveFederation> {
     const generation = this.generation;
+    const director = this.requireDirector();
     this.setSnapshot({
       ...this.snapshot,
       lifecycle: 'joining',
@@ -1052,7 +1271,8 @@ export class FedimintWalletService implements WalletService {
 
     try {
       signal?.throwIfAborted();
-      const joined = await wallet.joinFederation(pending.inviteCode);
+      const wallet = await director.createNamedWallet(name);
+      const joined = await wallet.joinFederation(pending.inviteCode, name);
       if (generation !== this.generation) {
         throw new DOMException('Request aborted.', 'AbortError');
       }
@@ -1067,15 +1287,18 @@ export class FedimintWalletService implements WalletService {
         network: pending.candidate.network,
         modules: pending.candidate.modules,
         guardianCount: pending.candidate.guardianCount,
-        clientName: clientName(SDK_DEFAULT_CLIENT_NAME),
+        clientName: name,
         joinedAtMs: Date.now(),
       });
       this.candidates.clear();
+      this.wallets.set(activeFederation.federationId, wallet);
+      this.federations.set(activeFederation.federationId, activeFederation);
+      this.federationBalances.set(activeFederation.federationId, msats(0n));
       this.setSnapshot({
         lifecycle: 'ready',
         connection: 'unknown',
-        activeFederation,
-        balanceMsats: msats(0n),
+        activeFederation: this.snapshot.activeFederation ?? activeFederation,
+        balanceMsats: this.combinedBalance(),
       });
       const balanceMsats = await this.readBalance(wallet);
       if (generation !== this.generation) {
@@ -1085,10 +1308,12 @@ export class FedimintWalletService implements WalletService {
       this.setSnapshot({
         lifecycle: 'ready',
         connection: 'online',
-        activeFederation,
-        balanceMsats,
+        activeFederation: this.snapshot.activeFederation ?? activeFederation,
+        balanceMsats: this.combinedBalance(),
       });
-      this.subscribeToBalance(wallet, generation);
+      this.federationBalances.set(activeFederation.federationId, balanceMsats);
+      this.setSnapshot({ balanceMsats: this.combinedBalance() });
+      this.subscribeToBalance(activeFederation, wallet, generation);
       return activeFederation;
     } catch (error) {
       if (generation === this.generation) {
@@ -1105,19 +1330,22 @@ export class FedimintWalletService implements WalletService {
   }
 
   private async reconcilePendingJoin(
-    pending: FederationDescriptor,
+    pending: FederationDescriptor & { readonly clientName?: ClientName },
     signal?: AbortSignal,
   ): Promise<ActiveFederation | undefined> {
-    const wallet = this.requireWallet();
-    if (this.snapshot.activeFederation !== undefined) {
-      return this.snapshot.activeFederation;
-    }
-
+    const name =
+      pending.clientName ??
+      clientName(
+        this.federations.size === 0
+          ? SDK_DEFAULT_CLIENT_NAME
+          : crypto.randomUUID(),
+      );
+    const wallet = await this.requireDirector().createNamedWallet(name);
     const generation = this.generation;
     signal?.throwIfAborted();
     let opened: boolean;
     try {
-      opened = await wallet.open();
+      opened = await wallet.open(name);
     } catch {
       throw new WalletError('operation_reconciliation_required');
     }
@@ -1140,14 +1368,17 @@ export class FedimintWalletService implements WalletService {
 
     const activeFederation: ActiveFederation = Object.freeze({
       ...pending,
-      clientName: clientName(SDK_DEFAULT_CLIENT_NAME),
+      clientName: name,
       joinedAtMs: Date.now(),
     });
+    this.wallets.set(activeFederation.federationId, wallet);
+    this.federations.set(activeFederation.federationId, activeFederation);
+    this.federationBalances.set(activeFederation.federationId, msats(0n));
     this.setSnapshot({
       lifecycle: 'ready',
       connection: 'unknown',
-      activeFederation,
-      balanceMsats: msats(0n),
+      activeFederation: this.snapshot.activeFederation ?? activeFederation,
+      balanceMsats: this.combinedBalance(),
       error: undefined,
     });
     const balanceMsats = await this.readBalance(wallet);
@@ -1155,32 +1386,47 @@ export class FedimintWalletService implements WalletService {
     this.setSnapshot({
       lifecycle: 'ready',
       connection: 'online',
-      activeFederation,
-      balanceMsats,
+      activeFederation: this.snapshot.activeFederation ?? activeFederation,
+      balanceMsats: this.combinedBalance(),
       error: undefined,
     });
-    this.subscribeToBalance(wallet, generation);
+    this.federationBalances.set(activeFederation.federationId, balanceMsats);
+    this.setSnapshot({ balanceMsats: this.combinedBalance() });
+    this.subscribeToBalance(activeFederation, wallet, generation);
     return activeFederation;
   }
 
   async refreshBalance(signal?: AbortSignal): Promise<void> {
-    const wallet = this.requireWallet();
     const generation = this.generation;
 
-    if (this.snapshot.activeFederation === undefined) {
+    if (this.federations.size === 0) {
       throw new WalletError('wallet_locked');
     }
 
     signal?.throwIfAborted();
-    const balanceMsats = await this.readBalance(wallet);
+    const balances = await Promise.all(
+      [...this.federations.values()].map(async (federation) => {
+        const wallet = this.wallets.get(federation.federationId);
+        if (wallet === undefined) {
+          throw new WalletError('sdk_unavailable');
+        }
+        return {
+          federationId: federation.federationId,
+          balance: await this.readBalance(wallet),
+        };
+      }),
+    );
     signal?.throwIfAborted();
     if (generation !== this.generation) {
       throw new DOMException('Request aborted.', 'AbortError');
     }
+    for (const entry of balances) {
+      this.federationBalances.set(entry.federationId, entry.balance);
+    }
     this.setSnapshot({
       ...this.snapshot,
       connection: 'online',
-      balanceMsats,
+      balanceMsats: this.combinedBalance(),
     });
   }
 
@@ -1289,9 +1535,9 @@ export class FedimintWalletService implements WalletService {
   private async fetchOperationFromSdk(
     key: OperationKey,
   ): Promise<WalletOperation | undefined> {
-    const wallet = this.requireWallet();
-    const activeFederation = this.requireActiveFederation();
-    if (key.federationId !== activeFederation.federationId) {
+    const wallet = this.wallets.get(key.federationId);
+    const federation = this.federations.get(key.federationId);
+    if (wallet === undefined || federation === undefined) {
       return undefined;
     }
 
@@ -1332,7 +1578,7 @@ export class FedimintWalletService implements WalletService {
     this.assertGeneration(generation);
     const normalized = sanitizeSdkOperation(
       rawEntry,
-      activeFederation.federationId,
+      federation.federationId,
       observedAtMs,
     );
     if (normalized === undefined) {
@@ -1349,49 +1595,53 @@ export class FedimintWalletService implements WalletService {
   private async reconcileOperations(
     signal?: AbortSignal,
   ): Promise<ReconciliationResult> {
-    const wallet = this.requireWallet();
-    const federation = this.requireActiveFederation();
     const generation = this.generation;
     signal?.throwIfAborted();
-    let entries: unknown;
-    try {
-      entries = await wallet.federation.listOperations(100);
-    } catch {
-      throw new WalletError('operation_reconciliation_required');
-    }
-    signal?.throwIfAborted();
-    this.assertGeneration(generation);
-
-    if (!Array.isArray(entries)) {
-      throw new WalletError('sdk_unavailable');
-    }
-
     const observedAtMs = Date.now();
     let added = 0;
     let updated = 0;
     let unchanged = 0;
-    for (const entry of entries) {
-      const operation = sanitizeSdkOperation(
-        entry,
-        federation.federationId,
-        observedAtMs,
-      );
-      if (operation === undefined) {
-        continue;
+    let observed = 0;
+    for (const federation of this.federations.values()) {
+      const wallet = this.wallets.get(federation.federationId);
+      if (wallet === undefined) {
+        throw new WalletError('operation_reconciliation_required');
       }
-      const result = this.mergeOperation(operation);
-      if (result === 'added') {
-        added += 1;
-      } else if (result === 'updated') {
-        updated += 1;
-      } else {
-        unchanged += 1;
+      let entries: unknown;
+      try {
+        entries = await wallet.federation.listOperations(100);
+      } catch {
+        throw new WalletError('operation_reconciliation_required');
+      }
+      signal?.throwIfAborted();
+      this.assertGeneration(generation);
+      if (!Array.isArray(entries)) {
+        throw new WalletError('sdk_unavailable');
+      }
+      observed += entries.length;
+      for (const entry of entries) {
+        const operation = sanitizeSdkOperation(
+          entry,
+          federation.federationId,
+          observedAtMs,
+        );
+        if (operation === undefined) {
+          continue;
+        }
+        const result = this.mergeOperation(operation);
+        if (result === 'added') {
+          added += 1;
+        } else if (result === 'updated') {
+          updated += 1;
+        } else {
+          unchanged += 1;
+        }
       }
     }
     this.resumeSdkOperationSubscriptions();
     this.publishOperations();
     return Object.freeze({
-      observed: entries.length,
+      observed,
       added,
       updated,
       unchanged,
@@ -1435,16 +1685,18 @@ export class FedimintWalletService implements WalletService {
   }
 
   private ensureRecoverySubscription(): void {
-    if (
-      this.cancelRecoverySubscription !== undefined ||
-      this.wallet === undefined
-    ) {
+    const activeFederation = this.snapshot.activeFederation;
+    const wallet =
+      activeFederation === undefined
+        ? undefined
+        : this.wallets.get(activeFederation.federationId);
+    if (this.cancelRecoverySubscription !== undefined || wallet === undefined) {
       return;
     }
 
     const generation = this.generation;
     this.cancelRecoverySubscription =
-      this.wallet.recovery.subscribeToRecoveryProgress(
+      wallet.recovery.subscribeToRecoveryProgress(
         () => {
           if (generation !== this.generation) {
             return;
@@ -1644,7 +1896,9 @@ export class FedimintWalletService implements WalletService {
 
   private ensureSdkOperationSubscription(
     operation: WalletOperation,
-    wallet: FedimintWallet | undefined = this.wallet,
+    wallet: FedimintWallet | undefined = this.wallets.get(
+      operation.key.federationId,
+    ),
     generation = this.generation,
   ): void {
     const flow = sdkOperationFlow(operation);
@@ -1877,10 +2131,15 @@ export class FedimintWalletService implements WalletService {
   }
 
   private requireWallet(): FedimintWallet {
-    if (this.wallet === undefined) {
+    const activeFederation = this.snapshot.activeFederation;
+    const wallet =
+      activeFederation === undefined
+        ? undefined
+        : this.wallets.get(activeFederation.federationId);
+    if (wallet === undefined) {
       throw new WalletError('wallet_locked');
     }
-    return this.wallet;
+    return wallet;
   }
 
   private async readBalance(wallet: FedimintWallet): Promise<Msats> {
@@ -1891,9 +2150,21 @@ export class FedimintWalletService implements WalletService {
     return msats(BigInt(value));
   }
 
-  private subscribeToBalance(wallet: FedimintWallet, generation: number): void {
-    this.cancelBalanceSubscription?.();
-    this.cancelBalanceSubscription = wallet.balance.subscribeBalance(
+  private combinedBalance(): Msats {
+    let total = 0n;
+    for (const balance of this.federationBalances.values()) {
+      total += balance;
+    }
+    return msats(total);
+  }
+
+  private subscribeToBalance(
+    federation: ActiveFederation,
+    wallet: FedimintWallet,
+    generation: number,
+  ): void {
+    this.cancelBalanceSubscriptions.get(federation.federationId)?.();
+    const cancel = wallet.balance.subscribeBalance(
       (value) => {
         if (
           generation !== this.generation ||
@@ -1903,10 +2174,14 @@ export class FedimintWalletService implements WalletService {
           return;
         }
 
+        this.federationBalances.set(
+          federation.federationId,
+          msats(BigInt(value)),
+        );
         this.setSnapshot({
           ...this.snapshot,
           connection: 'online',
-          balanceMsats: msats(BigInt(value)),
+          balanceMsats: this.combinedBalance(),
         });
       },
       () => {
@@ -1918,10 +2193,24 @@ export class FedimintWalletService implements WalletService {
         }
       },
     );
+    this.cancelBalanceSubscriptions.set(federation.federationId, cancel);
+  }
+
+  private cancelAllBalanceSubscriptions(): void {
+    for (const cancel of this.cancelBalanceSubscriptions.values()) {
+      try {
+        cancel();
+      } catch {
+        // Generation checks reject late callbacks from a failed teardown.
+      }
+    }
+    this.cancelBalanceSubscriptions.clear();
   }
 
   private setSnapshot(
-    input: Partial<Omit<WalletSnapshot, 'serviceKind'>>,
+    input: Partial<
+      Omit<WalletSnapshot, 'serviceKind' | 'connectedFederations'>
+    >,
   ): void {
     this.snapshot = this.makeSnapshot({
       ...this.snapshot,
@@ -1933,12 +2222,19 @@ export class FedimintWalletService implements WalletService {
   }
 
   private makeSnapshot(
-    input: Omit<WalletSnapshot, 'serviceKind' | 'operations'> &
+    input: Omit<
+      WalletSnapshot,
+      'serviceKind' | 'operations' | 'connectedFederations'
+    > &
       Partial<Pick<WalletSnapshot, 'operations'>>,
   ): WalletSnapshot {
     return Object.freeze({
       serviceKind: this.kind,
       ...input,
+      connectedFederations: summarizeConnectedFederations(
+        this.federations.values(),
+        this.federationBalances,
+      ),
       operations: Object.freeze([...(input.operations ?? [])]),
     });
   }

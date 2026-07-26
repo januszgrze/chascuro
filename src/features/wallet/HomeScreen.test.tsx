@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ComponentProps } from 'react';
@@ -11,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   clearableSecretText,
+  clientName,
   createWalletOperation,
   federationId,
   lnurlPayOfferId,
@@ -51,6 +53,7 @@ const SNAPSHOT: WalletSnapshot = {
   serviceKind: 'fake',
   lifecycle: 'ready',
   connection: 'online',
+  connectedFederations: [],
   balanceMsats: msats(0n),
   operations: [],
   capabilities: {
@@ -755,6 +758,57 @@ describe('HomeScreen activity', () => {
 });
 
 describe('HomeScreen settings and secret-storage warnings', () => {
+  it('lists every connected federation in the Network panel', async () => {
+    const user = userEvent.setup();
+    renderHome({
+      snapshot: {
+        ...SNAPSHOT,
+        activeFederation: {
+          federationId: federationId('fed-main'),
+          displayName: 'Main Federation',
+          network: 'bitcoin',
+          modules: ['ln', 'mint'],
+          guardianCount: 3,
+          clientName: clientName('main-client'),
+          joinedAtMs: 1_000,
+        },
+        connectedFederations: [
+          {
+            federationId: federationId('fed-main'),
+            displayName: 'Main Federation',
+            network: 'bitcoin',
+            balanceMsats: msats(1_250_000n),
+          },
+          {
+            federationId: federationId('fed-secondary'),
+            displayName: 'Secondary Federation',
+            network: 'bitcoin',
+            balanceMsats: msats(840_000n),
+          },
+        ],
+      },
+    });
+
+    await user.click(
+      screen.getByRole('button', { name: 'Backup and settings' }),
+    );
+    const networkLabel = screen.getByText('Network', {
+      selector: '.settings-row-label',
+    });
+    const networkRow = networkLabel.closest('details');
+    if (networkRow === null) throw new Error('Network row is missing.');
+    await user.click(networkLabel);
+
+    const network = within(networkRow);
+    expect(network.getByText('Connected federations')).toBeVisible();
+    expect(network.getByText('2')).toBeVisible();
+    expect(network.getByText('Primary federation')).toBeVisible();
+    expect(network.getByText('Main Federation')).toBeVisible();
+    expect(network.getByText('Secondary Federation')).toBeVisible();
+    expect(network.getByText('1250 sats')).toBeVisible();
+    expect(network.getByText('840 sats')).toBeVisible();
+  });
+
   it('requires at least one automatic lock and saves supported choices', async () => {
     const user = userEvent.setup();
     const onUpdateSecuritySettings = vi.fn().mockResolvedValue({

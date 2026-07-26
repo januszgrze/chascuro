@@ -502,7 +502,9 @@ export function normalizeLnReceiveState(
     | { canceled: { reason: string } }
     | 'funded'
     | 'awaiting_funds'
-    | 'claimed',
+    | 'claimed'
+    | { Claimed: unknown }
+    | { Failed: string },
 ): OperationStatus {
   if (
     state === 'created' ||
@@ -513,8 +515,11 @@ export function normalizeLnReceiveState(
   if (state === 'funded' || state === 'awaiting_funds') {
     return 'pending';
   }
-  if (state === 'claimed') {
+  if (state === 'claimed' || asRecord(state)?.Claimed !== undefined) {
     return 'settled';
+  }
+  if (asRecord(state)?.Failed !== undefined) {
+    return 'failed';
   }
   if (asRecord(state)?.canceled !== undefined) {
     return 'cancelled';

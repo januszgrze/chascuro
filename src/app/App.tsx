@@ -256,7 +256,17 @@ export function WalletApp(dependencies: WalletAppProps) {
       break;
     case 'home':
       content = shouldShowReady ? (
-        <ReadyScreen onContinue={() => setShowReady(false)} />
+        <ReadyScreen
+          onContinue={() => setShowReady(false)}
+          onAddFederation={
+            state.walletSnapshot.connectedFederations.length < 3
+              ? () => {
+                  setShowReady(false);
+                  controller.addAnotherFederation();
+                }
+              : undefined
+          }
+        />
       ) : state.chat !== undefined && chatLocation !== null ? (
         <ChatProvider
           controller={state.chat}

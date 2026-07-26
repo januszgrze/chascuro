@@ -3,11 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   approveFederationJoin,
   candidateId,
+  clientName,
   confirmEcashRedeem,
   confirmEcashSpend,
   confirmLightningQuote,
+  federationId,
   msats,
   sensitiveInput,
+  type ActiveFederation,
 } from '../../domain';
 import { FakeWalletService } from './fake-wallet-service';
 
@@ -186,6 +189,159 @@ describe('FakeWalletService', () => {
     receive.invoice.clear();
   });
 
+  it('routes Lightning receives by projected equal allocation', async () => {
+    const primary = testFederation('fed-b', 'client-b');
+    const secondary = testFederation('fed-a', 'client-a');
+    const service = new FakeWalletService({
+      latencyMs: 0,
+      initialBalanceMsats: msats(25_000n),
+      autoSettlePayments: false,
+      clock: () => 1_000,
+      idFactory: () => 'routing-id',
+    });
+    await service.open({
+      activeFederation: primary,
+      federations: [primary, secondary],
+    });
+    expect(
+      service
+        .getSnapshot()
+        .connectedFederations.map((federation) => federation.federationId),
+    ).toEqual([federationId('fed-b'), federationId('fed-a')]);
+
+    const tied = await service.lightning.createInvoice({
+      amountMsats: msats(1_000n),
+      expirySeconds: 600,
+    });
+    expect(tied.operation.key.federationId).toBe(federationId('fed-a'));
+
+    const invoice = sensitiveInput(tied.invoice.reveal());
+    const preview = await service.lightning.parseInvoice(invoice);
+    const quote = await service.lightning.quotePayment({
+      preview,
+      maximumFeeMsats: msats(5_000n),
+    });
+    const payment = await service.lightning.pay(
+      confirmLightningQuote(quote, preview.fingerprint, 1_000),
+    );
+    expect(payment.operation.key.federationId).toBe(federationId('fed-a'));
+
+    const afterSpend = await service.lightning.createInvoice({
+      amountMsats: msats(1_000n),
+      expirySeconds: 600,
+    });
+    expect(afterSpend.operation.key.federationId).toBe(federationId('fed-a'));
+    tied.invoice.clear();
+    afterSpend.invoice.clear();
+  });
+
+  it('defaults zero-balance Lightning receives to the primary federation', async () => {
+    const primary = testFederation('fed-b', 'client-b');
+    const secondary = testFederation('fed-a', 'client-a');
+    const service = new FakeWalletService({
+      latencyMs: 0,
+      initialBalanceMsats: msats(0n),
+      autoSettlePayments: false,
+      clock: () => 1_000,
+      idFactory: () => 'zero-balance-routing-id',
+    });
+    await service.open({
+      activeFederation: primary,
+      federations: [primary, secondary],
+    });
+
+    const receive = await service.lightning.createInvoice({
+      amountMsats: msats(1_000n),
+      expirySeconds: 600,
+    });
+
+    expect(receive.operation.key.federationId).toBe(federationId('fed-b'));
+    receive.invoice.clear();
+  });
+
+  it('excludes federations that cannot receive Lightning', async () => {
+    const primary = testFederation('fed-b', 'client-b');
+    const mintOnly = Object.freeze({
+      ...testFederation('fed-a', 'client-a'),
+      modules: Object.freeze(['mint']),
+    });
+    const tertiary = testFederation('fed-c', 'client-c');
+    const service = new FakeWalletService({
+      latencyMs: 0,
+      initialBalanceMsats: msats(25_000n),
+      autoSettlePayments: false,
+      clock: () => 1_000,
+      idFactory: () => 'capability-routing-id',
+    });
+    await service.open({
+      activeFederation: primary,
+      federations: [primary, mintOnly, tertiary],
+    });
+
+    const receive = await service.lightning.createInvoice({
+      amountMsats: msats(1_000n),
+      expirySeconds: 600,
+    });
+
+    expect(receive.operation.key.federationId).toBe(federationId('fed-b'));
+    receive.invoice.clear();
+  });
+
+  it('keeps non-Lightning capabilities bound to the primary federation', async () => {
+    const primary = Object.freeze({
+      ...testFederation('fed-a', 'client-a'),
+      modules: Object.freeze(['mint']),
+    });
+    const secondary = Object.freeze({
+      ...testFederation('fed-b', 'client-b'),
+      modules: Object.freeze(['ln', 'mint', 'wallet']),
+    });
+    const service = new FakeWalletService({ latencyMs: 0 });
+    await service.open({
+      activeFederation: primary,
+      federations: [primary, secondary],
+    });
+
+    await expect(service.federation.getCapabilities()).resolves.toMatchObject({
+      mint: true,
+      lightning: true,
+      onchain: false,
+      gatewayAvailable: true,
+      lightningSend: 'enabled',
+    });
+  });
+
+  it('keeps outgoing Lightning on one funded federation', async () => {
+    const primary = testFederation('fed-a', 'client-a');
+    const secondary = testFederation('fed-b', 'client-b');
+    const service = new FakeWalletService({
+      latencyMs: 0,
+      initialBalanceMsats: msats(25_000n),
+      autoSettlePayments: false,
+      clock: () => 1_000,
+      idFactory: () => 'single-source-id',
+    });
+    await service.open({
+      activeFederation: primary,
+      federations: [primary, secondary],
+    });
+    const receive = await service.lightning.createInvoice({
+      amountMsats: msats(30_000n),
+      expirySeconds: 600,
+    });
+    const preview = await service.lightning.parseInvoice(
+      sensitiveInput(receive.invoice.reveal()),
+    );
+
+    await expect(
+      service.lightning.quotePayment({
+        preview,
+        maximumFeeMsats: msats(5_000n),
+      }),
+    ).rejects.toMatchObject({ code: 'insufficient_balance' });
+    receive.invoice.clear();
+  });
+
   it('reports deterministic recovery progress', async () => {
     const service = new FakeWalletService({ latencyMs: 0, clock: () => 9000 });
     await service.open();
@@ -221,4 +377,16 @@ async function createJoinedService(options: {
   );
   await service.federation.join(approveFederationJoin(candidate, 1_000));
   return service;
+}
+
+function testFederation(id: string, name: string): ActiveFederation {
+  return Object.freeze({
+    federationId: federationId(id),
+    displayName: `Federation ${id}`,
+    network: 'signet',
+    modules: Object.freeze(['ln', 'mint']),
+    guardianCount: 3,
+    clientName: clientName(name),
+    joinedAtMs: 1_000,
+  });
 }

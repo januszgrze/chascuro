@@ -518,6 +518,102 @@ describe('WalletAppController feature safety', () => {
     });
   });
 
+  it('persists and restores up to three onboarding federations', async () => {
+    const previews = new Map([
+      [
+        'federation invite one',
+        {
+          federationId: federationId('fed-one'),
+          displayName: 'Federation one',
+          network: 'signet' as const,
+          modules: Object.freeze(['ln', 'mint']),
+          guardianCount: 3,
+          guardianOrigins: Object.freeze(['wss://one.example']),
+        },
+      ],
+      [
+        'federation invite two',
+        {
+          federationId: federationId('fed-two'),
+          displayName: 'Federation two',
+          network: 'signet' as const,
+          modules: Object.freeze(['ln', 'mint']),
+          guardianCount: 3,
+          guardianOrigins: Object.freeze(['wss://two.example']),
+        },
+      ],
+      [
+        'federation invite three',
+        {
+          federationId: federationId('fed-three'),
+          displayName: 'Federation three',
+          network: 'signet' as const,
+          modules: Object.freeze(['ln', 'mint']),
+          guardianCount: 3,
+          guardianOrigins: Object.freeze(['wss://three.example']),
+        },
+      ],
+    ]);
+    let nextId = 0;
+    const service = new FakeWalletService({
+      latencyMs: 0,
+      clock: () => 1_000,
+      idFactory: () => `portfolio-test-${++nextId}`,
+      autoSettlePayments: false,
+      previewResolver: (invite) => {
+        const preview = previews.get(invite);
+        if (preview === undefined) throw new Error('Unknown test invite.');
+        return preview;
+      },
+    });
+    const harness = await createInitializedController({ service });
+
+    for (const [index, invite] of [...previews.keys()].entries()) {
+      if (index > 0) {
+        harness.controller.addAnotherFederation();
+        expect(harness.controller.getState().phase).toBe('invite');
+      }
+      await harness.controller.previewFederation(invite);
+      await harness.controller.joinFederation(true);
+      expect(harness.controller.getState().phase).toBe('home');
+      expect(
+        harness.controller.getState().walletSnapshot.connectedFederations,
+      ).toHaveLength(index + 1);
+    }
+
+    expect(service.getSnapshot()).toMatchObject({
+      activeFederation: { federationId: 'fed-one' },
+      balanceMsats: msats(75_000_000n),
+    });
+    harness.controller.addAnotherFederation();
+    expect(harness.controller.getState().phase).toBe('home');
+
+    await harness.controller.lock();
+    const restoredService = createService();
+    const openSpy = vi.spyOn(restoredService, 'open');
+    const restored = await openStoredController(harness.store, {
+      service: restoredService,
+    });
+    const openInput = openSpy.mock.calls[0]?.[0];
+
+    expect(openInput?.federations).toHaveLength(3);
+    expect(
+      new Set(
+        openInput?.federations?.map((federation) => federation.clientName),
+      ).size,
+    ).toBe(3);
+    expect(restored.controller.getState()).toMatchObject({
+      phase: 'home',
+      walletSnapshot: {
+        activeFederation: { federationId: 'fed-one' },
+        balanceMsats: msats(75_000_000n),
+      },
+    });
+    expect(
+      restored.controller.getState().walletSnapshot.connectedFederations,
+    ).toHaveLength(3);
+  });
+
   it('suppresses only concurrent duplicate ecash spends and Lightning invoices', async () => {
     const harness = await createJoinedController({
       service: createService(5),

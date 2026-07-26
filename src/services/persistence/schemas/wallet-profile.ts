@@ -40,6 +40,8 @@ export interface WalletProfileV2 {
   readonly adapterVersion: string;
   readonly identity: WalletIdentityStateV2;
   readonly activeFederation?: PersistedActiveFederation;
+  readonly primaryFederationId?: string;
+  readonly federations?: readonly PersistedActiveFederation[];
 }
 
 export const walletProfileV2Schema: EncryptedRecordSchema<WalletProfileV2> =
@@ -77,7 +79,7 @@ export function parseWalletProfileV2(value: unknown): WalletProfileV2 {
     !hasAllowedExactKeys(
       value,
       ['version', 'mode', 'adapterVersion', 'identity'],
-      ['activeFederation'],
+      ['activeFederation', 'primaryFederationId', 'federations'],
     ) ||
     value.version !== WALLET_PROFILE_V2_VERSION ||
     !isWalletMode(value.mode) ||
@@ -91,6 +93,11 @@ export function parseWalletProfileV2(value: unknown): WalletProfileV2 {
     value.activeFederation === undefined
       ? undefined
       : parseActiveFederation(value.activeFederation);
+  const federations = parseFederationPortfolio(
+    value.federations,
+    value.primaryFederationId,
+    activeFederation,
+  );
 
   return Object.freeze({
     version: WALLET_PROFILE_V2_VERSION,
@@ -98,6 +105,12 @@ export function parseWalletProfileV2(value: unknown): WalletProfileV2 {
     adapterVersion: value.adapterVersion,
     identity,
     ...(activeFederation === undefined ? {} : { activeFederation }),
+    ...(federations === undefined
+      ? {}
+      : {
+          primaryFederationId: federations.primaryFederationId,
+          federations: federations.federations,
+        }),
   });
 }
 
@@ -186,6 +199,74 @@ function parseActiveFederation(value: unknown): PersistedActiveFederation {
     clientName: value.clientName,
     joinedAtMs: value.joinedAtMs,
   });
+}
+
+function parseFederationPortfolio(
+  value: unknown,
+  primaryFederationId: unknown,
+  activeFederation: PersistedActiveFederation | undefined,
+):
+  | {
+      readonly primaryFederationId: string;
+      readonly federations: readonly PersistedActiveFederation[];
+    }
+  | undefined {
+  if (value === undefined && primaryFederationId === undefined) {
+    return undefined;
+  }
+  if (
+    !Array.isArray(value) ||
+    value.length < 1 ||
+    value.length > 3 ||
+    !isIdentifier(primaryFederationId)
+  ) {
+    throw new TypeError('Stored federation portfolio is invalid.');
+  }
+
+  const federations = value.map(parseActiveFederation);
+  const federationIds = federations.map(
+    (federation) => federation.federationId,
+  );
+  const clientNames = federations.map((federation) => federation.clientName);
+  if (
+    new Set(federationIds).size !== federations.length ||
+    new Set(clientNames).size !== federations.length ||
+    !federationIds.includes(primaryFederationId) ||
+    new Set(federations.map((federation) => federation.network)).size !== 1
+  ) {
+    throw new TypeError('Stored federation portfolio is invalid.');
+  }
+
+  const primary = federations.find(
+    (federation) => federation.federationId === primaryFederationId,
+  );
+  if (
+    activeFederation !== undefined &&
+    (primary === undefined || !sameFederation(activeFederation, primary))
+  ) {
+    throw new TypeError('Stored primary federation is inconsistent.');
+  }
+
+  return Object.freeze({
+    primaryFederationId,
+    federations: Object.freeze(federations),
+  });
+}
+
+function sameFederation(
+  left: PersistedActiveFederation,
+  right: PersistedActiveFederation,
+): boolean {
+  return (
+    left.federationId === right.federationId &&
+    left.displayName === right.displayName &&
+    left.network === right.network &&
+    left.guardianCount === right.guardianCount &&
+    left.clientName === right.clientName &&
+    left.joinedAtMs === right.joinedAtMs &&
+    left.modules.length === right.modules.length &&
+    left.modules.every((module, index) => module === right.modules[index])
+  );
 }
 
 function hasAllowedExactKeys(

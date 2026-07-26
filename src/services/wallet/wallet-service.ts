@@ -1,30 +1,32 @@
-import type {
-  ActiveFederation,
-  ClearableSecretText,
-  ConfirmedEcashRedeem,
-  ConfirmedEcashSpend,
-  ConfirmedLightningQuote,
-  EcashExport,
-  EcashPreview,
-  FederationCandidate,
-  FederationCapabilities,
-  FederationDescriptor,
-  FederationJoinApproval,
-  LightningInvoicePreview,
-  LightningPaymentIntent,
-  LightningQuote,
-  LightningReceive,
-  LightningReceiveIntent,
-  Msats,
-  OperationKey,
-  PublicWalletError,
-  RecoveryListener,
-  RecoveryResult,
-  RecoveryStatus,
-  SecretMnemonic,
-  SensitiveInput,
-  TrackedOperation,
-  WalletOperation,
+import {
+  msats,
+  type ActiveFederation,
+  type ClientName,
+  type ClearableSecretText,
+  type ConfirmedEcashRedeem,
+  type ConfirmedEcashSpend,
+  type ConfirmedLightningQuote,
+  type EcashExport,
+  type EcashPreview,
+  type FederationCandidate,
+  type FederationCapabilities,
+  type FederationDescriptor,
+  type FederationJoinApproval,
+  type LightningInvoicePreview,
+  type LightningPaymentIntent,
+  type LightningQuote,
+  type LightningReceive,
+  type LightningReceiveIntent,
+  type Msats,
+  type OperationKey,
+  type PublicWalletError,
+  type RecoveryListener,
+  type RecoveryResult,
+  type RecoveryStatus,
+  type SecretMnemonic,
+  type SensitiveInput,
+  type TrackedOperation,
+  type WalletOperation,
 } from '../../domain';
 
 export type WalletServiceKind = 'fake' | 'fedimint';
@@ -32,11 +34,19 @@ export type WalletLifecycle =
   'closed' | 'opening' | 'ready' | 'joining' | 'error';
 export type WalletConnection = 'offline' | 'online' | 'unknown';
 
+export interface ConnectedFederationSummary {
+  readonly federationId: ActiveFederation['federationId'];
+  readonly displayName: string;
+  readonly network: ActiveFederation['network'];
+  readonly balanceMsats: Msats;
+}
+
 export interface WalletSnapshot {
   readonly serviceKind: WalletServiceKind;
   readonly lifecycle: WalletLifecycle;
   readonly connection: WalletConnection;
   readonly activeFederation?: ActiveFederation;
+  readonly connectedFederations: readonly ConnectedFederationSummary[];
   readonly balanceMsats: Msats;
   readonly operations: readonly WalletOperation[];
   readonly capabilities?: FederationCapabilities;
@@ -45,10 +55,27 @@ export interface WalletSnapshot {
 
 export interface OpenWalletInput {
   activeFederation?: ActiveFederation;
+  federations?: readonly ActiveFederation[];
   signal?: AbortSignal;
 }
 
 export type WalletSnapshotListener = (snapshot: WalletSnapshot) => void;
+
+export function summarizeConnectedFederations(
+  federations: Iterable<ActiveFederation>,
+  balances: ReadonlyMap<string, Msats>,
+): readonly ConnectedFederationSummary[] {
+  return Object.freeze(
+    [...federations].map((federation) =>
+      Object.freeze({
+        federationId: federation.federationId,
+        displayName: federation.displayName,
+        network: federation.network,
+        balanceMsats: balances.get(federation.federationId) ?? msats(0n),
+      }),
+    ),
+  );
+}
 
 export interface WalletIdentityService {
   createMnemonic(): Promise<SecretMnemonic>;
@@ -66,6 +93,7 @@ export interface WalletFederationService {
   join(
     approval: FederationJoinApproval,
     signal?: AbortSignal,
+    clientName?: ClientName,
   ): Promise<ActiveFederation>;
   /**
    * Reopens the SDK's fixed client after a submitted join was interrupted
@@ -73,7 +101,7 @@ export interface WalletFederationService {
    * no joined client exists for the pending descriptor.
    */
   reconcilePendingJoin(
-    pending: FederationDescriptor,
+    pending: FederationDescriptor & { readonly clientName?: ClientName },
     signal?: AbortSignal,
   ): Promise<ActiveFederation | undefined>;
   getCapabilities(signal?: AbortSignal): Promise<FederationCapabilities>;

@@ -22,6 +22,7 @@ import {
   type ConfirmedEcashRedeem,
   type ConfirmedEcashSpend,
   type ConfirmedLightningQuote,
+  type ClientName,
   type EcashExport,
   type EcashPreview,
   type FederationCandidate,
@@ -44,16 +45,18 @@ import {
   type TrackedOperation,
   type WalletOperation,
 } from '../../domain';
-import type {
-  OpenWalletInput,
-  OperationCursor,
-  OperationListener,
-  OperationPage,
-  ReconciliationResult,
-  WalletService,
-  WalletSnapshot,
-  WalletSnapshotListener,
+import {
+  summarizeConnectedFederations,
+  type OpenWalletInput,
+  type OperationCursor,
+  type OperationListener,
+  type OperationPage,
+  type ReconciliationResult,
+  type WalletService,
+  type WalletSnapshot,
+  type WalletSnapshotListener,
 } from './wallet-service';
+import { selectLightningReceiveFederationId } from './lightning-receive-router';
 
 export interface FakeWalletOptions {
   clock?: () => number;
@@ -61,6 +64,9 @@ export interface FakeWalletOptions {
   latencyMs?: number;
   initialBalanceMsats?: Msats;
   preview?: Omit<FederationCandidate, 'candidateId' | 'expiresAtMs'>;
+  previewResolver?: (
+    inviteCode: string,
+  ) => Omit<FederationCandidate, 'candidateId' | 'expiresAtMs'>;
   lightningFeeQuoteAvailable?: boolean;
   autoSettlePayments?: boolean;
   mnemonicWords?: readonly string[];
@@ -79,6 +85,7 @@ interface ParsedSecret {
 interface PendingQuote {
   quote: LightningQuote;
   invoice: SensitiveInput;
+  federation: ActiveFederation;
 }
 
 const DEFAULT_PREVIEW = {
@@ -134,9 +141,11 @@ export class FakeWalletService implements WalletService {
     join: (
       approval: FederationJoinApproval,
       signal?: AbortSignal,
-    ): Promise<ActiveFederation> => this.joinFederation(approval, signal),
+      requestedClientName?: ClientName,
+    ): Promise<ActiveFederation> =>
+      this.joinFederation(approval, signal, requestedClientName),
     reconcilePendingJoin: (
-      pending: FederationDescriptor,
+      pending: FederationDescriptor & { readonly clientName?: ClientName },
       signal?: AbortSignal,
     ): Promise<ActiveFederation | undefined> =>
       this.reconcilePendingJoin(pending, signal),
@@ -230,9 +239,16 @@ export class FakeWalletService implements WalletService {
     FederationCandidate,
     'candidateId' | 'expiresAtMs'
   >;
+  private readonly previewResolver:
+    | ((
+        inviteCode: string,
+      ) => Omit<FederationCandidate, 'candidateId' | 'expiresAtMs'>)
+    | undefined;
   private readonly lightningFeeQuoteAvailable: boolean;
   private readonly autoSettlePayments: boolean;
   private readonly defaultMnemonicWords: readonly string[];
+  private readonly federations = new Map<string, ActiveFederation>();
+  private readonly federationBalances = new Map<string, Msats>();
   private lifetime = new AbortController();
   private joinInFlight:
     | {
@@ -251,6 +267,7 @@ export class FakeWalletService implements WalletService {
     this.initialBalanceMsats =
       options.initialBalanceMsats ?? msats(25_000_000n);
     this.preview = options.preview ?? DEFAULT_PREVIEW;
+    this.previewResolver = options.previewResolver;
     this.lightningFeeQuoteAvailable =
       options.lightningFeeQuoteAvailable ?? true;
     this.autoSettlePayments = options.autoSettlePayments ?? true;
@@ -272,35 +289,38 @@ export class FakeWalletService implements WalletService {
 
     this.lifetime.abort();
     this.lifetime = new AbortController();
+    const restoredFederations = [
+      ...(input.federations ??
+        (input.activeFederation === undefined ? [] : [input.activeFederation])),
+    ];
+    this.federations.clear();
+    this.federationBalances.clear();
+    for (const federation of restoredFederations) {
+      this.federations.set(federation.federationId, federation);
+      this.federationBalances.set(
+        federation.federationId,
+        this.initialBalanceMsats,
+      );
+    }
+    const activeFederation = input.activeFederation ?? restoredFederations[0];
+    const combinedBalanceMsats = this.combinedBalance();
     this.updateSnapshot({
       lifecycle: 'opening',
       connection: 'unknown',
-      activeFederation: input.activeFederation,
-      balanceMsats:
-        input.activeFederation === undefined
-          ? msats(0n)
-          : this.snapshot.balanceMsats === 0n
-            ? this.initialBalanceMsats
-            : this.snapshot.balanceMsats,
+      activeFederation,
+      balanceMsats: combinedBalanceMsats,
       error: undefined,
     });
 
     await wait(this.latencyMs, [input.signal, this.lifetime.signal]);
 
     const capabilities =
-      input.activeFederation === undefined
-        ? undefined
-        : this.capabilitiesFor(input.activeFederation);
+      activeFederation === undefined ? undefined : this.combinedCapabilities();
     this.updateSnapshot({
       lifecycle: 'ready',
-      connection: input.activeFederation === undefined ? 'unknown' : 'online',
-      activeFederation: input.activeFederation,
-      balanceMsats:
-        input.activeFederation === undefined
-          ? msats(0n)
-          : this.snapshot.balanceMsats === 0n
-            ? this.initialBalanceMsats
-            : this.snapshot.balanceMsats,
+      connection: activeFederation === undefined ? 'unknown' : 'online',
+      activeFederation,
+      balanceMsats: combinedBalanceMsats,
       capabilities,
       error: undefined,
     });
@@ -313,6 +333,8 @@ export class FakeWalletService implements WalletService {
     this.parsedInvoices.clear();
     this.quotes.clear();
     this.submittedQuotes.clear();
+    this.federations.clear();
+    this.federationBalances.clear();
     this.joinInFlight = undefined;
     this.operationListeners.clear();
     this.updateSnapshot({
@@ -374,7 +396,7 @@ export class FakeWalletService implements WalletService {
 
     this.candidates.clear();
     const candidate: FederationCandidate = Object.freeze({
-      ...this.preview,
+      ...(this.previewResolver?.(normalizedInvite) ?? this.preview),
       candidateId: candidateId(this.idFactory()),
       expiresAtMs: this.clock() + 5 * 60 * 1000,
     });
@@ -390,6 +412,7 @@ export class FakeWalletService implements WalletService {
   private async joinFederation(
     approval: FederationJoinApproval,
     signal?: AbortSignal,
+    requestedClientName?: ClientName,
   ): Promise<ActiveFederation> {
     if (this.joinInFlight?.candidateId === approval.candidateId) {
       return this.joinInFlight.promise;
@@ -410,7 +433,7 @@ export class FakeWalletService implements WalletService {
       throw new WalletError('candidate_expired');
     }
 
-    const promise = this.performJoin(pending, signal);
+    const promise = this.performJoin(pending, signal, requestedClientName);
     this.joinInFlight = {
       candidateId: approval.candidateId,
       promise,
@@ -429,6 +452,7 @@ export class FakeWalletService implements WalletService {
   private async performJoin(
     pending: PendingCandidate,
     signal?: AbortSignal,
+    requestedClientName?: ClientName,
   ): Promise<ActiveFederation> {
     this.updateSnapshot({
       lifecycle: 'joining',
@@ -444,17 +468,22 @@ export class FakeWalletService implements WalletService {
         network: pending.candidate.network,
         modules: pending.candidate.modules,
         guardianCount: pending.candidate.guardianCount,
-        clientName: clientName(this.idFactory()),
+        clientName: requestedClientName ?? clientName(this.idFactory()),
         joinedAtMs: this.clock(),
       });
 
       this.candidates.clear();
+      this.federations.set(activeFederation.federationId, activeFederation);
+      this.federationBalances.set(
+        activeFederation.federationId,
+        this.initialBalanceMsats,
+      );
       this.updateSnapshot({
         lifecycle: 'ready',
         connection: 'online',
-        activeFederation,
-        balanceMsats: this.initialBalanceMsats,
-        capabilities: this.capabilitiesFor(activeFederation),
+        activeFederation: this.snapshot.activeFederation ?? activeFederation,
+        balanceMsats: this.combinedBalance(),
+        capabilities: this.combinedCapabilities(),
         error: undefined,
       });
       return activeFederation;
@@ -478,11 +507,11 @@ export class FakeWalletService implements WalletService {
   ): Promise<FederationCapabilities> {
     this.assertReady();
     signal?.throwIfAborted();
-    return this.capabilitiesFor(this.requireActiveFederation());
+    return this.combinedCapabilities();
   }
 
   private async reconcilePendingJoin(
-    pending: FederationDescriptor,
+    pending: FederationDescriptor & { readonly clientName?: ClientName },
     signal?: AbortSignal,
   ): Promise<ActiveFederation | undefined> {
     this.assertReady();
@@ -490,15 +519,20 @@ export class FakeWalletService implements WalletService {
     await wait(this.latencyMs, [signal, this.lifetime.signal]);
     const activeFederation: ActiveFederation = Object.freeze({
       ...pending,
-      clientName: clientName(`reconciled-${this.safeId()}`),
+      clientName: pending.clientName ?? clientName(crypto.randomUUID()),
       joinedAtMs: this.clock(),
     });
+    this.federations.set(activeFederation.federationId, activeFederation);
+    this.federationBalances.set(
+      activeFederation.federationId,
+      this.initialBalanceMsats,
+    );
     this.updateSnapshot({
       lifecycle: 'ready',
       connection: 'online',
-      activeFederation,
-      balanceMsats: this.initialBalanceMsats,
-      capabilities: this.capabilitiesFor(activeFederation),
+      activeFederation: this.snapshot.activeFederation ?? activeFederation,
+      balanceMsats: this.combinedBalance(),
+      capabilities: this.combinedCapabilities(),
       error: undefined,
     });
     return activeFederation;
@@ -524,6 +558,76 @@ export class FakeWalletService implements WalletService {
             ? 'enabled'
             : 'disabled_fee_quote_unavailable',
     });
+  }
+
+  private combinedCapabilities(): FederationCapabilities {
+    const primaryFederation =
+      this.snapshot.activeFederation ?? this.federations.values().next().value;
+    if (primaryFederation === undefined) {
+      throw new WalletError('wallet_locked');
+    }
+    const primaryCapabilities = this.capabilitiesFor(primaryFederation);
+    const capabilities = [...this.federations.values()].map((federation) =>
+      this.capabilitiesFor(federation),
+    );
+    return Object.freeze({
+      mint: primaryCapabilities.mint,
+      lightning: capabilities.some((entry) => entry.lightning),
+      onchain: primaryCapabilities.onchain,
+      gatewayAvailable: capabilities.some((entry) => entry.gatewayAvailable),
+      recovery: 'unknown',
+      lightningSend: capabilities.some(
+        (entry) => entry.lightningSend === 'enabled',
+      )
+        ? 'enabled'
+        : capabilities.some(
+              (entry) =>
+                entry.lightningSend === 'disabled_fee_quote_unavailable',
+            )
+          ? 'disabled_fee_quote_unavailable'
+          : capabilities.some(
+                (entry) =>
+                  entry.lightningSend === 'disabled_gateway_unavailable',
+              )
+            ? 'disabled_gateway_unavailable'
+            : 'unsupported',
+    });
+  }
+
+  private combinedBalance(): Msats {
+    let total = 0n;
+    for (const balance of this.federationBalances.values()) {
+      total += balance;
+    }
+    return msats(total);
+  }
+
+  private selectReceiveFederation(amountMsats: Msats): ActiveFederation {
+    const primaryFederation = this.requireActiveFederation();
+    const receivable = [...this.federations.values()].filter((federation) => {
+      const capabilities = this.capabilitiesFor(federation);
+      return capabilities.lightning && capabilities.gatewayAvailable;
+    });
+    const selectedFederationId = selectLightningReceiveFederationId(
+      receivable.map((federation) => ({
+        federationId: federation.federationId,
+        balanceMsats:
+          this.federationBalances.get(federation.federationId) ?? msats(0n),
+      })),
+      primaryFederation.federationId,
+      amountMsats,
+      this.combinedBalance(),
+    );
+    const selectedFederation =
+      selectedFederationId === undefined
+        ? undefined
+        : receivable.find(
+            (federation) => federation.federationId === selectedFederationId,
+          );
+    if (selectedFederation === undefined) {
+      throw new WalletError('gateway_unavailable');
+    }
+    return selectedFederation;
   }
 
   private async refreshBalance(signal?: AbortSignal): Promise<void> {
@@ -599,11 +703,15 @@ export class FakeWalletService implements WalletService {
 
     if (this.autoSettlePayments) {
       this.scheduleTerminal(operation.key, 'settled', () => {
+        const current =
+          this.federationBalances.get(activeFederation.federationId) ??
+          msats(0n);
+        this.federationBalances.set(
+          activeFederation.federationId,
+          addMsats(current, intent.preview.amountMsats),
+        );
         this.updateSnapshot({
-          balanceMsats: addMsats(
-            this.snapshot.balanceMsats,
-            intent.preview.amountMsats,
-          ),
+          balanceMsats: this.combinedBalance(),
         });
       });
     }
@@ -622,7 +730,9 @@ export class FakeWalletService implements WalletService {
     if (confirmed.intent.amountMsats === 0n) {
       throw new WalletError('invalid_input');
     }
-    if (confirmed.intent.amountMsats > this.snapshot.balanceMsats) {
+    const activeBalance =
+      this.federationBalances.get(activeFederation.federationId) ?? msats(0n);
+    if (confirmed.intent.amountMsats > activeBalance) {
       throw new WalletError('insufficient_balance');
     }
 
@@ -637,12 +747,11 @@ export class FakeWalletService implements WalletService {
     const recordRef = secretRecordRef(
       `secret:ecash-export:${operation.key.operationId}`,
     );
-    this.updateSnapshot({
-      balanceMsats: subtractMsats(
-        this.snapshot.balanceMsats,
-        confirmed.intent.amountMsats,
-      ),
-    });
+    this.federationBalances.set(
+      activeFederation.federationId,
+      subtractMsats(activeBalance, confirmed.intent.amountMsats),
+    );
+    this.updateSnapshot({ balanceMsats: this.combinedBalance() });
 
     if (this.autoSettlePayments) {
       this.scheduleTerminal(operation.key, 'settled');
@@ -683,12 +792,14 @@ export class FakeWalletService implements WalletService {
     this.updateOperation(key, 'refunding');
     this.scheduleTerminal(key, 'refunded', () => {
       if (current.amountMsats !== undefined) {
-        this.updateSnapshot({
-          balanceMsats: addMsats(
-            this.snapshot.balanceMsats,
-            current.amountMsats,
-          ),
-        });
+        const balance =
+          this.federationBalances.get(activeFederation.federationId) ??
+          msats(0n);
+        this.federationBalances.set(
+          activeFederation.federationId,
+          addMsats(balance, current.amountMsats),
+        );
+        this.updateSnapshot({ balanceMsats: this.combinedBalance() });
       }
     });
   }
@@ -740,11 +851,6 @@ export class FakeWalletService implements WalletService {
     signal?: AbortSignal,
   ): Promise<LightningReceive> {
     this.assertReady();
-    const activeFederation = this.requireActiveFederation();
-    const capabilities = this.capabilitiesFor(activeFederation);
-    if (!capabilities.lightning || !capabilities.gatewayAvailable) {
-      throw new WalletError('gateway_unavailable');
-    }
     if (
       intent.amountMsats === 0n ||
       !Number.isSafeInteger(intent.expirySeconds) ||
@@ -753,6 +859,7 @@ export class FakeWalletService implements WalletService {
       throw new WalletError('invalid_input');
     }
 
+    const activeFederation = this.selectReceiveFederation(intent.amountMsats);
     signal?.throwIfAborted();
     const expiresAtMs = this.clock() + intent.expirySeconds * 1000;
     const operation = this.createOperation(
@@ -772,11 +879,15 @@ export class FakeWalletService implements WalletService {
 
     if (this.autoSettlePayments) {
       this.scheduleTerminal(operation.key, 'settled', () => {
+        const current =
+          this.federationBalances.get(activeFederation.federationId) ??
+          msats(0n);
+        this.federationBalances.set(
+          activeFederation.federationId,
+          addMsats(current, intent.amountMsats),
+        );
         this.updateSnapshot({
-          balanceMsats: addMsats(
-            this.snapshot.balanceMsats,
-            intent.amountMsats,
-          ),
+          balanceMsats: this.combinedBalance(),
         });
       });
     }
@@ -796,7 +907,7 @@ export class FakeWalletService implements WalletService {
     signal?: AbortSignal,
   ): Promise<LightningQuote> {
     this.assertReady();
-    const activeFederation = this.requireActiveFederation();
+    const primaryFederation = this.requireActiveFederation();
     signal?.throwIfAborted();
     const rawInvoice = this.parsedInvoices.get(intent.preview.fingerprint);
     if (rawInvoice === undefined) {
@@ -811,7 +922,7 @@ export class FakeWalletService implements WalletService {
     if (intent.preview.expiresAtMs <= this.clock()) {
       throw new WalletError('invoice_expired');
     }
-    if (intent.preview.network !== activeFederation.network) {
+    if (intent.preview.network !== primaryFederation.network) {
       throw new WalletError('invoice_wrong_network');
     }
     if (!this.lightningFeeQuoteAvailable) {
@@ -823,6 +934,19 @@ export class FakeWalletService implements WalletService {
     );
     if (feeMsats > intent.maximumFeeMsats) {
       throw new WalletError('fee_limit_exceeded');
+    }
+    const total = addMsats(intent.preview.amountMsats, feeMsats);
+    const sourceFederation = [...this.federations.values()]
+      .filter((federation) => this.capabilitiesFor(federation).lightning)
+      .sort((left, right) =>
+        left.federationId.localeCompare(right.federationId),
+      )
+      .find(
+        (federation) =>
+          (this.federationBalances.get(federation.federationId) ?? 0n) >= total,
+      );
+    if (sourceFederation === undefined) {
+      throw new WalletError('insufficient_balance');
     }
 
     const quote: LightningQuote = Object.freeze({
@@ -837,6 +961,7 @@ export class FakeWalletService implements WalletService {
     this.quotes.set(quote.quoteId, {
       quote,
       invoice: rawInvoice.input,
+      federation: sourceFederation,
     });
     return quote;
   }
@@ -846,7 +971,6 @@ export class FakeWalletService implements WalletService {
     signal?: AbortSignal,
   ): Promise<TrackedOperation> {
     this.assertReady();
-    const activeFederation = this.requireActiveFederation();
     const duplicate = this.submittedQuotes.get(confirmed.quote.quoteId);
     if (duplicate !== undefined) {
       return duplicate;
@@ -866,12 +990,14 @@ export class FakeWalletService implements WalletService {
       confirmed.quote.amountMsats,
       confirmed.quote.feeMsats,
     );
-    if (total > this.snapshot.balanceMsats) {
+    const sourceBalance =
+      this.federationBalances.get(pending.federation.federationId) ?? msats(0n);
+    if (total > sourceBalance) {
       throw new WalletError('insufficient_balance');
     }
 
     const operation = this.createOperation(
-      activeFederation,
+      pending.federation,
       'lightning_send',
       confirmed.quote.amountMsats,
       'pending',
@@ -880,9 +1006,11 @@ export class FakeWalletService implements WalletService {
     );
     const tracked = this.tracked(operation);
     this.submittedQuotes.set(confirmed.quote.quoteId, tracked);
-    this.updateSnapshot({
-      balanceMsats: subtractMsats(this.snapshot.balanceMsats, total),
-    });
+    this.federationBalances.set(
+      pending.federation.federationId,
+      subtractMsats(sourceBalance, total),
+    );
+    this.updateSnapshot({ balanceMsats: this.combinedBalance() });
 
     if (this.autoSettlePayments) {
       this.scheduleTerminal(operation.key, 'settled');
@@ -1120,7 +1248,9 @@ export class FakeWalletService implements WalletService {
   }
 
   private updateSnapshot(
-    patch: Partial<Omit<WalletSnapshot, 'serviceKind'>>,
+    patch: Partial<
+      Omit<WalletSnapshot, 'serviceKind' | 'connectedFederations'>
+    >,
   ): void {
     this.snapshot = this.makeSnapshot({
       ...this.snapshot,
@@ -1132,11 +1262,15 @@ export class FakeWalletService implements WalletService {
   }
 
   private makeSnapshot(
-    input: Omit<WalletSnapshot, 'serviceKind'>,
+    input: Omit<WalletSnapshot, 'serviceKind' | 'connectedFederations'>,
   ): WalletSnapshot {
     return Object.freeze({
       serviceKind: this.kind,
       ...input,
+      connectedFederations: summarizeConnectedFederations(
+        this.federations.values(),
+        this.federationBalances,
+      ),
       operations: Object.freeze([...(input.operations ?? [])]),
     });
   }

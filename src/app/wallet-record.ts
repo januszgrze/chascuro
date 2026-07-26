@@ -33,6 +33,8 @@ export interface WalletRecord {
   mode: WalletServiceKind;
   identity?: WalletIdentityStateV2;
   activeFederation?: ActiveFederation;
+  primaryFederationId?: ActiveFederation['federationId'];
+  federations: readonly ActiveFederation[];
 }
 
 /**
@@ -116,12 +118,19 @@ export function parsePersistedWalletRecord(
 
 export function readWalletRecord(value: unknown): WalletRecord {
   const persisted = parsePersistedWalletRecord(value);
+  const activeFederation =
+    persisted.activeFederation === undefined
+      ? undefined
+      : parseActiveFederation(persisted.activeFederation);
   return Object.freeze({
     mode: persisted.mode,
-    activeFederation:
-      persisted.activeFederation === undefined
-        ? undefined
-        : parseActiveFederation(persisted.activeFederation),
+    activeFederation,
+    ...(activeFederation === undefined
+      ? {}
+      : { primaryFederationId: activeFederation.federationId }),
+    federations: Object.freeze(
+      activeFederation === undefined ? [] : [activeFederation],
+    ),
   });
 }
 
@@ -131,8 +140,22 @@ export function createWalletProfileV2(
     adapterVersion: string;
     identity?: WalletIdentityStateV2;
     activeFederation?: ActiveFederation;
+    primaryFederationId?: ActiveFederation['federationId'];
+    federations?: readonly ActiveFederation[];
   },
 ): WalletProfileV2 {
+  const federations =
+    input.federations ??
+    (input.activeFederation === undefined ? [] : [input.activeFederation]);
+  const activeFederation =
+    input.activeFederation ??
+    (input.primaryFederationId === undefined
+      ? federations[0]
+      : federations.find(
+          (federation) => federation.federationId === input.primaryFederationId,
+        ));
+  const primaryFederationId =
+    input.primaryFederationId ?? activeFederation?.federationId;
   return parseWalletProfileV2(
     serializeBigInts({
       version: 2,
@@ -140,22 +163,47 @@ export function createWalletProfileV2(
       adapterVersion: input.adapterVersion,
       identity: input.identity ?? { status: 'not-initialized' },
       activeFederation:
-        input.activeFederation === undefined
+        activeFederation === undefined
           ? undefined
-          : serializeActiveFederation(input.activeFederation),
+          : serializeActiveFederation(activeFederation),
+      primaryFederationId,
+      federations:
+        federations.length === 0
+          ? undefined
+          : federations.map(serializeActiveFederation),
     }),
   );
 }
 
 export function readWalletProfileV2(value: unknown): WalletRecord {
   const persisted = parseWalletProfileV2(value);
+  const legacyFederation =
+    persisted.activeFederation === undefined
+      ? undefined
+      : parseActiveFederation(persisted.activeFederation);
+  const federations = Object.freeze(
+    persisted.federations === undefined
+      ? legacyFederation === undefined
+        ? []
+        : [legacyFederation]
+      : persisted.federations.map(parseActiveFederation),
+  );
+  const primaryFederationId =
+    persisted.primaryFederationId === undefined
+      ? legacyFederation?.federationId
+      : federationId(persisted.primaryFederationId);
+  const activeFederation =
+    primaryFederationId === undefined
+      ? undefined
+      : federations.find(
+          (federation) => federation.federationId === primaryFederationId,
+        );
   return Object.freeze({
     mode: persisted.mode,
     identity: persisted.identity,
-    activeFederation:
-      persisted.activeFederation === undefined
-        ? undefined
-        : parseActiveFederation(persisted.activeFederation),
+    activeFederation,
+    primaryFederationId,
+    federations,
   });
 }
 
