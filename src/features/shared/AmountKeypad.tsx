@@ -1,4 +1,5 @@
-import { BitcoinMark } from './BitcoinMark';
+import { formatCoinsForDisplay } from '../../domain';
+import { useAmountDisplayMode } from './amount-display-context';
 import { Keypad } from './Keypad';
 
 interface AmountKeypadProps {
@@ -8,9 +9,9 @@ interface AmountKeypadProps {
   maxDigits?: number;
 }
 
-function groupDigits(digits: string): string {
+function coinsFromDigits(digits: string): bigint {
   const normalized = digits.replace(/^0+(?=\d)/, '') || '0';
-  return normalized.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return BigInt(normalized);
 }
 
 export function AmountKeypad({
@@ -19,6 +20,8 @@ export function AmountKeypad({
   disabled = false,
   maxDigits = 15,
 }: AmountKeypadProps) {
+  const amountDisplayMode = useAmountDisplayMode();
+
   function press(digit: string) {
     if (disabled || value.length >= maxDigits) {
       return;
@@ -34,13 +37,17 @@ export function AmountKeypad({
     onChange(value.slice(0, -1));
   }
 
+  const amountLabel = formatCoinsForDisplay(
+    coinsFromDigits(value),
+    amountDisplayMode,
+  );
+
   return (
     <div>
       <div className="amount-display">
-        <BitcoinMark className="amount-symbol" />
-        <span className="amount-value">{groupDigits(value)}</span>
+        <span className="amount-value">{amountLabel}</span>
         <span className="visually-hidden" role="status">
-          {groupDigits(value)} sats entered
+          {amountLabel} entered
         </span>
       </div>
       <Keypad

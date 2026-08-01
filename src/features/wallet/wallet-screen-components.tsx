@@ -129,7 +129,6 @@ export function ResultScreen({
             </h1>
             {amountSats !== undefined && (
               <p className="result-amount">
-                <BitcoinMark className="amount-symbol" />
                 <span className="amount-value">{amountSats}</span>
               </p>
             )}

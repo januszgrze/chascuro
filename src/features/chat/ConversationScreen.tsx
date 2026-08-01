@@ -8,6 +8,7 @@ import {
 } from 'react';
 
 import {
+  formatCoinsForDisplay,
   sanitizeChatText,
   type ChatMessage,
   type ChatMessageId,
@@ -17,6 +18,7 @@ import {
   type WalletOperation,
 } from '../../domain';
 import { BitcoinMark } from '../shared/BitcoinMark';
+import { useAmountDisplayMode } from '../shared/amount-display-context';
 import { Keypad } from '../shared/Keypad';
 import { QrCode } from '../shared/QrCode';
 import { ScreenError } from '../shared/ScreenFrame';
@@ -569,6 +571,7 @@ function PaymentCard({
   onClaim: () => void;
   onRetry: () => void;
 }) {
+  const amountDisplayMode = useAmountDisplayMode();
   const outgoing = payment.direction === 'outgoing';
   const firstName = counterparty.split(/\s+/u)[0] ?? 'they';
   return (
@@ -578,8 +581,7 @@ function PaymentCard({
           {outgoing ? 'You sent' : `${firstName} sent you`}
         </span>
         <span className="chat-payment-amount">
-          <BitcoinMark className="chat-payment-symbol" />
-          {formatSats(payment.amountSats)}
+          {formatCoinsForDisplay(BigInt(payment.amountSats), amountDisplayMode)}
         </span>
         {status === 'claimed' && (
           <span className="chat-payment-status">
@@ -744,9 +746,14 @@ function PaySheet({
   onClose: () => void;
   onSend: (amountSats: number) => void;
 }) {
+  const amountDisplayMode = useAmountDisplayMode();
   const [amount, setAmount] = useState('');
   const amountSats = amount.length === 0 ? 0 : Number.parseInt(amount, 10);
   const ready = Number.isSafeInteger(amountSats) && amountSats > 0;
+  const amountLabel = formatCoinsForDisplay(
+    BigInt(amountSats),
+    amountDisplayMode,
+  );
 
   function press(digit: string) {
     if (amount.length >= 15) return;
@@ -781,10 +788,9 @@ function PaySheet({
           </button>
         </div>
         <div className="chat-pay-amount">
-          <BitcoinMark className="chat-pay-symbol" />
-          <span className="chat-pay-value">{groupDigits(amount)}</span>
+          <span className="chat-pay-value">{amountLabel}</span>
           <span className="visually-hidden" role="status">
-            {groupDigits(amount)} sats entered
+            {amountLabel} entered
           </span>
         </div>
         <div className="chat-pay-note-row">
@@ -817,11 +823,6 @@ function PaySheet({
   );
 }
 
-function groupDigits(digits: string): string {
-  const normalized = digits.replace(/^0+(?=\d)/u, '') || '0';
-  return normalized.replace(/\B(?=(\d{3})+(?!\d))/gu, ',');
-}
-
 function PaySuccessSheet({
   amountSats,
   counterparty,
@@ -831,6 +832,7 @@ function PaySuccessSheet({
   counterparty: string;
   onDone: () => void;
 }) {
+  const amountDisplayMode = useAmountDisplayMode();
   const firstName = counterparty.split(/\s+/u)[0] ?? 'them';
   return (
     <div className="chat-sheet-overlay" role="presentation">
@@ -846,8 +848,7 @@ function PaySuccessSheet({
         </span>
         <h2 className="chat-success-title">Payment sent</h2>
         <p className="chat-success-amount">
-          <BitcoinMark className="chat-payment-symbol" />
-          {formatSats(amountSats)}
+          {formatCoinsForDisplay(BigInt(amountSats), amountDisplayMode)}
         </p>
         <p className="chat-success-to">to {counterparty}</p>
         <p className="chat-success-wait">
@@ -975,10 +976,6 @@ function deliveryLabel(message: ChatMessage, offline: boolean): string {
     case 'received':
       return 'Received';
   }
-}
-
-function formatSats(value: number): string {
-  return value.toLocaleString('en-US');
 }
 
 function initials(title: string): string {

@@ -863,6 +863,7 @@ describe('WalletAppController feature safety', () => {
     render(
       <HomeScreen
         snapshot={state.walletSnapshot}
+        displaySettings={state.displaySettings}
         securitySettings={state.securitySettings}
         refreshing={false}
         error={state.error}
@@ -903,6 +904,9 @@ describe('WalletAppController feature safety', () => {
             inactivityTimeoutMs,
             backgroundTimeoutMs,
           )
+        }
+        onUpdateDisplaySettings={(amountDisplayMode) =>
+          harness.controller.updateDisplaySettings(amountDisplayMode)
         }
         onErase={(confirmation) => harness.controller.eraseWallet(confirmation)}
       />,
@@ -1020,6 +1024,29 @@ describe('WalletAppController feature safety', () => {
       version: 1,
       inactivityTimeoutMs: null,
       backgroundTimeoutMs: 60_000,
+    });
+  });
+
+  it('persists the amount display preference across wallet unlocks', async () => {
+    const first = await createJoinedController();
+    const updated =
+      await first.controller.updateDisplaySettings('compact-hybrid');
+    expect(updated).toEqual({
+      ok: true,
+      value: { version: 1, amountDisplayMode: 'compact-hybrid' },
+    });
+    await first.controller.lock();
+
+    const reloaded = await openStoredController(first.store, {
+      service: createService(),
+    });
+
+    expect(reloaded.controller.getState()).toMatchObject({
+      phase: 'home',
+      displaySettings: {
+        version: 1,
+        amountDisplayMode: 'compact-hybrid',
+      },
     });
   });
 

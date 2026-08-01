@@ -3,6 +3,7 @@ import type { ChatController } from '../services/chat/chat-controller';
 import type { ChatSessionLifecycle } from '../services/chat/chat-session-lifecycle';
 import type { LnurlPayResolver } from '../services/lnurl';
 import type { WalletDataEraseReport } from '../services/persistence/erase-wallet-data';
+import type { WalletDisplaySettings } from '../services/persistence/schemas/wallet-display-settings-record';
 import type { WalletSecuritySettings } from '../services/persistence/schemas/wallet-settings-record';
 import type { VaultOptions } from '../services/persistence/vault';
 import type { VaultStore } from '../services/persistence/vault-store';
@@ -51,6 +52,7 @@ export interface WalletAppState {
   readonly chat?: ChatController;
   readonly missingCapabilities: readonly CapabilityName[];
   readonly candidate?: FederationCandidate;
+  readonly displaySettings: WalletDisplaySettings;
   readonly securitySettings: WalletSecuritySettings;
   readonly busy?: WalletAppAction;
   readonly error?: string;

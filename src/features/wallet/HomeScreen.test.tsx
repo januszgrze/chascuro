@@ -27,6 +27,7 @@ import {
   type WalletOperation,
 } from '../../domain';
 import type { WalletSnapshot } from '../../services/wallet';
+import { AmountDisplayProvider } from '../shared/AmountDisplay';
 import { HomeScreen } from './HomeScreen';
 
 const scanner = vi.hoisted(() => ({
@@ -68,6 +69,10 @@ type HomeProps = ComponentProps<typeof HomeScreen>;
 function createHomeProps(overrides: Partial<HomeProps> = {}): HomeProps {
   return {
     snapshot: SNAPSHOT,
+    displaySettings: {
+      version: 1,
+      amountDisplayMode: 'bip177',
+    },
     securitySettings: {
       version: 1,
       inactivityTimeoutMs: 5 * 60_000,
@@ -113,6 +118,9 @@ function createHomeProps(overrides: Partial<HomeProps> = {}): HomeProps {
     onUpdateSecuritySettings: vi
       .fn()
       .mockResolvedValue({ ok: false, error: 'Unavailable.' }),
+    onUpdateDisplaySettings: vi
+      .fn()
+      .mockResolvedValue({ ok: false, error: 'Unavailable.' }),
     onErase: vi.fn().mockResolvedValue({ ok: false, error: 'Unavailable.' }),
     ...overrides,
   };
@@ -120,7 +128,11 @@ function createHomeProps(overrides: Partial<HomeProps> = {}): HomeProps {
 
 function renderHome(overrides: Partial<HomeProps> = {}) {
   const props = createHomeProps(overrides);
-  render(<HomeScreen {...props} />);
+  render(
+    <AmountDisplayProvider mode={props.displaySettings.amountDisplayMode}>
+      <HomeScreen {...props} />
+    </AmountDisplayProvider>,
+  );
   return props;
 }
 
@@ -294,7 +306,7 @@ describe('HomeScreen scanned wallet input', () => {
 
     await user.click(screen.getByRole('button', { name: '5' }));
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'Choose an amount from 10 to 100 sats.',
+      'Choose an amount from ₿ 10 to ₿ 100.',
     );
     expect(
       screen.getByRole('button', { name: 'Review payment' }),
@@ -340,7 +352,7 @@ describe('HomeScreen scanned wallet input', () => {
     await user.click(screen.getByRole('button', { name: 'Continue' }));
 
     expect(screen.queryByRole('group', { name: 'Number keypad' })).toBeNull();
-    expect(screen.getAllByText('21000').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('₿ 21,000').length).toBeGreaterThan(0);
     await user.click(screen.getByRole('button', { name: 'Review payment' }));
     expect(onQuoteLnurlPayment).toHaveBeenCalledWith(
       offer.offerId,
@@ -755,6 +767,32 @@ describe('HomeScreen activity', () => {
 });
 
 describe('HomeScreen settings and secret-storage warnings', () => {
+  it('saves the compact hybrid amount preference from Settings', async () => {
+    const user = userEvent.setup();
+    const onUpdateDisplaySettings = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { version: 1, amountDisplayMode: 'compact-hybrid' },
+    });
+    renderHome({ onUpdateDisplaySettings });
+
+    await user.click(
+      screen.getByRole('button', { name: 'Backup and settings' }),
+    );
+    await user.click(screen.getByText('Display'));
+
+    const selector = screen.getByLabelText('Bitcoin amount format');
+    expect(selector).toHaveValue('bip177');
+    await user.selectOptions(selector, 'compact-hybrid');
+    await user.click(
+      screen.getByRole('button', { name: 'Save display preference' }),
+    );
+
+    expect(onUpdateDisplaySettings).toHaveBeenCalledWith('compact-hybrid');
+    expect(
+      await screen.findByText('Amount display preference saved.'),
+    ).toBeVisible();
+  });
+
   it('requires at least one automatic lock and saves supported choices', async () => {
     const user = userEvent.setup();
     const onUpdateSecuritySettings = vi.fn().mockResolvedValue({
