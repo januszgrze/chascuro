@@ -1,4 +1,5 @@
-import { formatCoinsCoinStandard } from '../../domain';
+import { formatCoinsForDisplay } from '../../domain';
+import { useAmountDisplayMode } from './amount-display-context';
 import { Keypad } from './Keypad';
 
 interface AmountKeypadProps {
@@ -19,6 +20,8 @@ export function AmountKeypad({
   disabled = false,
   maxDigits = 15,
 }: AmountKeypadProps) {
+  const amountDisplayMode = useAmountDisplayMode();
+
   function press(digit: string) {
     if (disabled || value.length >= maxDigits) {
       return;
@@ -34,7 +37,10 @@ export function AmountKeypad({
     onChange(value.slice(0, -1));
   }
 
-  const amountLabel = formatCoinsCoinStandard(coinsFromDigits(value));
+  const amountLabel = formatCoinsForDisplay(
+    coinsFromDigits(value),
+    amountDisplayMode,
+  );
 
   return (
     <div>

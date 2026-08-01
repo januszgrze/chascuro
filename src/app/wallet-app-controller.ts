@@ -31,6 +31,7 @@ import {
   type ChatMessageId,
   type ChatPaymentSendOutcome,
   type ConversationId,
+  type AmountDisplayMode,
 } from '../domain';
 import type { ChatController } from '../services/chat/chat-controller';
 import {
@@ -68,6 +69,13 @@ import {
   walletProfileV2Schema,
   type WalletProfileV2,
 } from '../services/persistence/schemas/wallet-profile';
+import {
+  DEFAULT_WALLET_DISPLAY_SETTINGS,
+  parseWalletDisplaySettings,
+  WALLET_DISPLAY_SETTINGS_RECORD_ID,
+  walletDisplaySettingsSchema,
+  type WalletDisplaySettings,
+} from '../services/persistence/schemas/wallet-display-settings-record';
 import {
   DEFAULT_WALLET_SECURITY_SETTINGS,
   parseWalletSecuritySettings,
@@ -225,6 +233,7 @@ export class WalletAppController {
       walletSnapshot: this.service.getSnapshot(),
       chatAvailability: this.chatLifecycle.getAvailability(),
       missingCapabilities: Object.freeze([...this.capabilityReport.missing]),
+      displaySettings: DEFAULT_WALLET_DISPLAY_SETTINGS,
       securitySettings: DEFAULT_WALLET_SECURITY_SETTINGS,
     });
   }
@@ -402,8 +411,14 @@ export class WalletAppController {
         walletSecuritySettingsSchema,
         WALLET_SETTINGS_RECORD_ID,
       );
+      const displaySettingsRecord = await records.get(
+        walletDisplaySettingsSchema,
+        WALLET_DISPLAY_SETTINGS_RECORD_ID,
+      );
       const securitySettings =
         settingsRecord?.payload ?? DEFAULT_WALLET_SECURITY_SETTINGS;
+      const displaySettings =
+        displaySettingsRecord?.payload ?? DEFAULT_WALLET_DISPLAY_SETTINGS;
       this.inactivityLock.configure?.(securitySettings);
       if (
         import.meta.env.PROD &&
@@ -547,6 +562,7 @@ export class WalletAppController {
         candidate: undefined,
         chatAvailability,
         chat: this.chatController,
+        displaySettings,
         securitySettings,
         error: undefined,
       });
@@ -1117,6 +1133,28 @@ export class WalletAppController {
       );
       this.inactivityLock.configure?.(settings);
       this.update({ securitySettings: settings });
+      return settings;
+    });
+  }
+
+  async updateDisplaySettings(
+    amountDisplayMode: AmountDisplayMode,
+  ): Promise<WalletFeatureResult<WalletDisplaySettings>> {
+    return this.runWalletFeature(async () => {
+      const records = this.recordStore;
+      if (records === undefined) {
+        throw new TypeError('Encrypted settings storage is unavailable.');
+      }
+      const settings = parseWalletDisplaySettings({
+        version: 1,
+        amountDisplayMode,
+      });
+      await records.put(
+        walletDisplaySettingsSchema,
+        WALLET_DISPLAY_SETTINGS_RECORD_ID,
+        settings,
+      );
+      this.update({ displaySettings: settings });
       return settings;
     });
   }

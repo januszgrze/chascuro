@@ -26,7 +26,7 @@ test('completes the explicit simulated onboarding flow on mobile', async ({
   await expect(
     page.getByRole('heading', { name: 'Wallet home' }),
   ).toBeVisible();
-  await expect(page.getByText('25000', { exact: true })).toBeVisible();
+  await expect(page.getByText('₿ 25,000', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Receive' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
 

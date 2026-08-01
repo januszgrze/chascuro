@@ -4,9 +4,10 @@ import {
   MAX_MSATS,
   addMsats,
   deserializeMsats,
-  formatCoinsCoinStandard,
+  formatCoinsBip177,
+  formatCoinsCompactHybrid,
   formatMsatsAsSats,
-  formatMsatsCoinStandard,
+  formatMsatsForDisplay,
   msats,
   msatsToSatsExact,
   parseMsats,
@@ -53,16 +54,29 @@ describe('money', () => {
     expect(formatMsatsAsSats(msats(1_100n))).toBe('1.1');
   });
 
-  it('formats Coin Standard amounts with prefix ¢ and ₿', () => {
-    expect(formatMsatsCoinStandard(msats(0n))).toBe('¢ 0');
-    expect(formatMsatsCoinStandard(msats(5_433_000n))).toBe('¢ 5,433');
-    expect(formatMsatsCoinStandard(msats(1_001n))).toBe('¢ 1');
-    expect(formatCoinsCoinStandard(50_000_000n)).toBe('¢ 50m');
-    expect(formatCoinsCoinStandard(1_500_000n)).toBe('¢ 1,500,000');
-    expect(formatCoinsCoinStandard(100_000_000n)).toBe('₿ 1');
-    expect(formatCoinsCoinStandard(150_000_000n)).toBe('₿ 1.5');
-    expect(formatCoinsCoinStandard(100_000_054n)).toBe('₿ 1.00000054');
-    expect(formatMsatsCoinStandard(satsToMsats(100_000_000n))).toBe('₿ 1');
+  it('formats BIP-177 amounts as integral base-unit bitcoins', () => {
+    expect(formatCoinsBip177(0n)).toBe('₿ 0');
+    expect(formatCoinsBip177(5_433n)).toBe('₿ 5,433');
+    expect(formatCoinsBip177(100_000_000n)).toBe('₿ 100,000,000');
+  });
+
+  it('formats the optional compact hybrid amounts with ¢ and legacy ₿ units', () => {
+    expect(formatCoinsCompactHybrid(50_000_000n)).toBe('¢ 50m');
+    expect(formatCoinsCompactHybrid(1_500_000n)).toBe('¢ 1,500,000');
+    expect(formatCoinsCompactHybrid(100_000_000n)).toBe('₿ 1');
+    expect(formatCoinsCompactHybrid(150_000_000n)).toBe('₿ 1.5');
+    expect(formatCoinsCompactHybrid(100_000_054n)).toBe('₿ 1.00000054');
+  });
+
+  it('preserves non-whole-satoshi Lightning precision in every mode', () => {
+    expect(formatMsatsForDisplay(msats(1n), 'bip177')).toBe('1 msat');
+    expect(formatMsatsForDisplay(msats(999n), 'compact-hybrid')).toBe(
+      '999 msat',
+    );
+    expect(formatMsatsForDisplay(msats(1_000n), 'bip177')).toBe('₿ 1');
+    expect(formatMsatsForDisplay(msats(1_001n), 'compact-hybrid')).toBe(
+      '1,001 msat',
+    );
   });
 
   it('only converts to sats exactly when no remainder exists', () => {

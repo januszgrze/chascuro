@@ -314,7 +314,7 @@ describe('WalletApp federation flow', () => {
     await continuePastReady(harness.user);
 
     expect(joinSpy).toHaveBeenCalledTimes(1);
-    expect(screen.getByText('25000')).toBeVisible();
+    expect(screen.getByText('₿ 25,000')).toBeVisible();
     expect(screen.getByRole('region', { name: 'Wallet home' })).toBeVisible();
     const keyring = await harness.store.get(
       encryptedRecordKeyringStorageId(WALLET_RECORD_ID),

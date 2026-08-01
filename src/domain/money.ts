@@ -121,7 +121,11 @@ export function formatMsatsAsSats(value: Msats): string {
   return `${wholeSats.toString(10)}.${fractionalSats}`;
 }
 
-/** One bitcoin in coins (formerly satoshis). `₿ 1 = ¢ 100,000,000`. */
+export type AmountDisplayMode = 'bip177' | 'compact-hybrid';
+
+export const DEFAULT_AMOUNT_DISPLAY_MODE: AmountDisplayMode = 'bip177';
+
+/** One legacy BTC in base-unit bitcoins (formerly satoshis). */
 export const COINS_PER_BITCOIN = 100_000_000n;
 const COINS_PER_MILLION = 1_000_000n;
 
@@ -131,11 +135,22 @@ function formatIntegerWithCommas(value: bigint): string {
 }
 
 /**
- * Formats a whole-coin amount using Coin Standard prefix notation:
- * `¢ 5,433` under one bitcoin, `₿ 1.5` at or above one bitcoin.
- * Exact million coin amounts under one bitcoin use `¢ Nm` shorthand.
+ * Formats a whole base-unit amount using BIP-177 integral notation.
  */
-export function formatCoinsCoinStandard(coins: bigint): string {
+export function formatCoinsBip177(coins: bigint): string {
+  if (coins < 0n) {
+    throw new RangeError('Amount must not be negative.');
+  }
+
+  return `₿ ${formatIntegerWithCommas(coins)}`;
+}
+
+/**
+ * Formats a whole base-unit amount using the optional compact hybrid notation:
+ * `¢ 5,433` under one legacy BTC, `₿ 1.5` at or above one legacy BTC.
+ * Exact million-base-unit amounts under one legacy BTC use `¢ Nm` shorthand.
+ */
+export function formatCoinsCompactHybrid(coins: bigint): string {
   if (coins < 0n) {
     throw new RangeError('Amount must not be negative.');
   }
@@ -162,11 +177,30 @@ export function formatCoinsCoinStandard(coins: bigint): string {
 }
 
 /**
- * Formats millisatoshis for UI display per the Coin Standard.
- * Floors sub-coin (millisatoshi) remainders so ¢ amounts stay integers.
+ * Formats a whole base-unit amount using the selected display preference.
  */
-export function formatMsatsCoinStandard(value: Msats): string {
-  return formatCoinsCoinStandard(value / MSATS_PER_SAT);
+export function formatCoinsForDisplay(
+  coins: bigint,
+  mode: AmountDisplayMode,
+): string {
+  return mode === 'compact-hybrid'
+    ? formatCoinsCompactHybrid(coins)
+    : formatCoinsBip177(coins);
+}
+
+/**
+ * Formats millisatoshis without discarding Lightning precision. Whole
+ * base-unit values use the selected mode; fractional values fall back to an
+ * exact integer millisatoshi label because BIP-177 does not redefine msats.
+ */
+export function formatMsatsForDisplay(
+  value: Msats,
+  mode: AmountDisplayMode,
+): string {
+  if (value % MSATS_PER_SAT !== 0n) {
+    return `${formatIntegerWithCommas(value)} msat`;
+  }
+  return formatCoinsForDisplay(value / MSATS_PER_SAT, mode);
 }
 
 export function addMsats(left: Msats, right: Msats): Msats {

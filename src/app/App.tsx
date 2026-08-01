@@ -18,6 +18,7 @@ import {
   type ChatLocation,
 } from '../features/chat/chat-route';
 import { ScreenFrame } from '../features/shared/ScreenFrame';
+import { AmountDisplayProvider } from '../features/shared/AmountDisplay';
 import {
   BootScreen,
   LockingScreen,
@@ -287,6 +288,7 @@ export function WalletApp(dependencies: WalletAppProps) {
           }
           autoFocusChat={restoreChatFocus}
           snapshot={state.walletSnapshot}
+          displaySettings={state.displaySettings}
           securitySettings={state.securitySettings}
           refreshing={state.busy === 'refresh'}
           error={state.error}
@@ -325,6 +327,9 @@ export function WalletApp(dependencies: WalletAppProps) {
               backgroundTimeoutMs,
             )
           }
+          onUpdateDisplaySettings={(amountDisplayMode) =>
+            controller.updateDisplaySettings(amountDisplayMode)
+          }
           onErase={async (typedConfirmation) => {
             const result = await controller.eraseWallet(typedConfirmation);
             if (result.ok) {
@@ -343,21 +348,23 @@ export function WalletApp(dependencies: WalletAppProps) {
   }
 
   return (
-    <ScreenFrame
-      serviceKind={state.serviceKind}
-      disposableTestWallet={state.disposableTestWallet}
-      busy={state.busy !== undefined}
-      chrome={
-        isOnboardingPhase ||
-        state.phase === 'home' ||
-        state.phase === 'locked' ||
-        isDarkStatusPhase
-          ? 'none'
-          : 'default'
-      }
-      surface={shouldShowWelcome || isDarkStatusPhase ? 'dark' : 'light'}
-    >
-      {content}
-    </ScreenFrame>
+    <AmountDisplayProvider mode={state.displaySettings.amountDisplayMode}>
+      <ScreenFrame
+        serviceKind={state.serviceKind}
+        disposableTestWallet={state.disposableTestWallet}
+        busy={state.busy !== undefined}
+        chrome={
+          isOnboardingPhase ||
+          state.phase === 'home' ||
+          state.phase === 'locked' ||
+          isDarkStatusPhase
+            ? 'none'
+            : 'default'
+        }
+        surface={shouldShowWelcome || isDarkStatusPhase ? 'dark' : 'light'}
+      >
+        {content}
+      </ScreenFrame>
+    </AmountDisplayProvider>
   );
 }

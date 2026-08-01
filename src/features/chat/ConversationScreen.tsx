@@ -8,7 +8,7 @@ import {
 } from 'react';
 
 import {
-  formatCoinsCoinStandard,
+  formatCoinsForDisplay,
   sanitizeChatText,
   type ChatMessage,
   type ChatMessageId,
@@ -18,6 +18,7 @@ import {
   type WalletOperation,
 } from '../../domain';
 import { BitcoinMark } from '../shared/BitcoinMark';
+import { useAmountDisplayMode } from '../shared/amount-display-context';
 import { Keypad } from '../shared/Keypad';
 import { QrCode } from '../shared/QrCode';
 import { ScreenError } from '../shared/ScreenFrame';
@@ -570,6 +571,7 @@ function PaymentCard({
   onClaim: () => void;
   onRetry: () => void;
 }) {
+  const amountDisplayMode = useAmountDisplayMode();
   const outgoing = payment.direction === 'outgoing';
   const firstName = counterparty.split(/\s+/u)[0] ?? 'they';
   return (
@@ -579,7 +581,7 @@ function PaymentCard({
           {outgoing ? 'You sent' : `${firstName} sent you`}
         </span>
         <span className="chat-payment-amount">
-          {formatCoinsCoinStandard(BigInt(payment.amountSats))}
+          {formatCoinsForDisplay(BigInt(payment.amountSats), amountDisplayMode)}
         </span>
         {status === 'claimed' && (
           <span className="chat-payment-status">
@@ -744,10 +746,14 @@ function PaySheet({
   onClose: () => void;
   onSend: (amountSats: number) => void;
 }) {
+  const amountDisplayMode = useAmountDisplayMode();
   const [amount, setAmount] = useState('');
   const amountSats = amount.length === 0 ? 0 : Number.parseInt(amount, 10);
   const ready = Number.isSafeInteger(amountSats) && amountSats > 0;
-  const amountLabel = formatCoinsCoinStandard(BigInt(amountSats));
+  const amountLabel = formatCoinsForDisplay(
+    BigInt(amountSats),
+    amountDisplayMode,
+  );
 
   function press(digit: string) {
     if (amount.length >= 15) return;
@@ -826,6 +832,7 @@ function PaySuccessSheet({
   counterparty: string;
   onDone: () => void;
 }) {
+  const amountDisplayMode = useAmountDisplayMode();
   const firstName = counterparty.split(/\s+/u)[0] ?? 'them';
   return (
     <div className="chat-sheet-overlay" role="presentation">
@@ -841,7 +848,7 @@ function PaySuccessSheet({
         </span>
         <h2 className="chat-success-title">Payment sent</h2>
         <p className="chat-success-amount">
-          {formatCoinsCoinStandard(BigInt(amountSats))}
+          {formatCoinsForDisplay(BigInt(amountSats), amountDisplayMode)}
         </p>
         <p className="chat-success-to">to {counterparty}</p>
         <p className="chat-success-wait">

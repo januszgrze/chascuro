@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 
 import {
   classifyWalletInput,
-  formatCoinsCoinStandard,
-  formatMsatsCoinStandard,
+  formatCoinsForDisplay,
+  formatMsatsForDisplay,
   isTerminalOperationStatus,
   parsePositiveSats,
   type ClearableSecretText,
+  type AmountDisplayMode,
   type EcashExport,
   type EcashPreview,
   type LightningInvoicePreview,
@@ -22,8 +23,10 @@ import {
   type WalletOperation,
 } from '../../domain';
 import type { WalletSecuritySettings } from '../../services/persistence/schemas/wallet-settings-record';
+import type { WalletDisplaySettings } from '../../services/persistence/schemas/wallet-display-settings-record';
 import type { WalletSnapshot } from '../../services/wallet';
 import { AmountKeypad } from '../shared/AmountKeypad';
+import { useAmountDisplayMode } from '../shared/amount-display-context';
 import { BitcoinMark } from '../shared/BitcoinMark';
 import {
   ArrowDownIcon,
@@ -91,6 +94,7 @@ type FeatureResult<T> =
 
 interface HomeScreenProps {
   snapshot: WalletSnapshot;
+  displaySettings: WalletDisplaySettings;
   securitySettings: WalletSecuritySettings;
   refreshing: boolean;
   error?: string;
@@ -136,6 +140,9 @@ interface HomeScreenProps {
     inactivityTimeoutMs: number | null,
     backgroundTimeoutMs: number | null,
   ): Promise<FeatureResult<WalletSecuritySettings>>;
+  onUpdateDisplaySettings(
+    amountDisplayMode: AmountDisplayMode,
+  ): Promise<FeatureResult<WalletDisplaySettings>>;
   onErase(typedConfirmation: string): Promise<FeatureResult<void>>;
   onOpenChat?: () => void;
   autoFocusChat?: boolean;
@@ -282,10 +289,12 @@ export function HomeScreen(props: HomeScreenProps) {
       return (
         <SettingsScreen
           snapshot={props.snapshot}
+          displaySettings={props.displaySettings}
           securitySettings={props.securitySettings}
           onBack={goHome}
           onRevealMnemonic={props.onRevealMnemonic}
           onUpdateSecuritySettings={props.onUpdateSecuritySettings}
+          onUpdateDisplaySettings={props.onUpdateDisplaySettings}
           onErase={props.onErase}
           onLock={props.onLock}
           onOpenChat={props.onOpenChat}
@@ -303,6 +312,8 @@ function WalletOverview({
   onOpenChat,
   autoFocusChat,
 }: HomeScreenProps & { onNavigate(view: HomeView): void }) {
+  const amountDisplayMode = useAmountDisplayMode();
+
   return (
     <section className="home-shell" aria-labelledby="home-title">
       <div className="home-topbar">
@@ -330,10 +341,11 @@ function WalletOverview({
         <span className="balance-label">BALANCE</span>
         <p className="balance-amount" aria-live="polite">
           <span className="amount-value">
-            {formatMsatsCoinStandard(snapshot.balanceMsats)}
+            {formatMsatsForDisplay(snapshot.balanceMsats, amountDisplayMode)}
           </span>
           <span className="visually-hidden">
-            Balance {formatMsatsCoinStandard(snapshot.balanceMsats)}
+            Balance{' '}
+            {formatMsatsForDisplay(snapshot.balanceMsats, amountDisplayMode)}
           </span>
         </p>
       </div>
@@ -368,7 +380,7 @@ function WalletOverview({
                 <span
                   className={`activity-amount ${incoming ? 'is-in' : 'is-out'}`}
                 >
-                  {formatSignedAmount(operation, incoming)}
+                  {formatSignedAmount(operation, incoming, amountDisplayMode)}
                 </span>
               </li>
             );
@@ -406,12 +418,16 @@ function WalletOverview({
 function formatSignedAmount(
   operation: WalletOperation,
   incoming: boolean,
+  amountDisplayMode: AmountDisplayMode,
 ): string {
   if (operation.amountMsats === undefined) {
     return '—';
   }
   const sign = incoming ? '+' : '−';
-  return `${sign}${formatMsatsCoinStandard(operation.amountMsats)}`;
+  return `${sign}${formatMsatsForDisplay(
+    operation.amountMsats,
+    amountDisplayMode,
+  )}`;
 }
 
 function EcashReceiveScreen({
@@ -423,6 +439,7 @@ function EcashReceiveScreen({
   onParse(rawNotes: string): Promise<FeatureResult<EcashPreview>>;
   onRedeem(preview: EcashPreview): Promise<FeatureResult<TrackedOperation>>;
 }) {
+  const amountDisplayMode = useAmountDisplayMode();
   const [manual, setManual] = useState('');
   const [showManual, setShowManual] = useState(false);
   const [preview, setPreview] = useState<EcashPreview>();
@@ -508,7 +525,7 @@ function EcashReceiveScreen({
         amountSats={
           operation.amountMsats === undefined
             ? undefined
-            : formatMsatsCoinStandard(operation.amountMsats)
+            : formatMsatsForDisplay(operation.amountMsats, amountDisplayMode)
         }
       >
         <button className="cta-pay" type="button" onClick={onHome}>
@@ -526,7 +543,10 @@ function EcashReceiveScreen({
         tone="success"
         direction="in"
         title="Redeem"
-        amountSats={formatMsatsCoinStandard(preview.amountMsats)}
+        amountSats={formatMsatsForDisplay(
+          preview.amountMsats,
+          amountDisplayMode,
+        )}
         subtitle={
           preview.compatible
             ? 'Compatible with your federation'
@@ -613,6 +633,7 @@ function EcashSendScreen({
 }: PaymentNavProps & {
   onCreate(amountSats: string): Promise<FeatureResult<EcashExport>>;
 }) {
+  const amountDisplayMode = useAmountDisplayMode();
   const [amount, setAmount] = useState('');
   const [sentAmount, setSentAmount] = useState<string>();
   const [exported, setExported] = useState<EcashExport>();
@@ -669,7 +690,10 @@ function EcashSendScreen({
           {sentAmount !== undefined && (
             <p className="qr-share-amount">
               <span className="amount-value">
-                {formatCoinsCoinStandard(BigInt(sentAmount || '0'))}
+                {formatCoinsForDisplay(
+                  BigInt(sentAmount || '0'),
+                  amountDisplayMode,
+                )}
               </span>
             </p>
           )}
@@ -740,6 +764,7 @@ function LightningReceiveScreen({
     description: string,
   ): Promise<FeatureResult<LightningReceive>>;
 }) {
+  const amountDisplayMode = useAmountDisplayMode();
   const [amount, setAmount] = useState('');
   const [receive, setReceive] = useState<LightningReceive>();
   const [busy, setBusy] = useState(false);
@@ -860,7 +885,10 @@ function LightningReceiveScreen({
         amountSats={
           displayOperation.amountMsats === undefined
             ? undefined
-            : formatMsatsCoinStandard(displayOperation.amountMsats)
+            : formatMsatsForDisplay(
+                displayOperation.amountMsats,
+                amountDisplayMode,
+              )
         }
       >
         <button className="cta-pay" type="button" onClick={onHome}>
@@ -890,7 +918,10 @@ function LightningReceiveScreen({
         {displayOperation.amountMsats !== undefined && (
           <p className="qr-share-amount">
             <span className="amount-value">
-              {formatMsatsCoinStandard(displayOperation.amountMsats)}
+              {formatMsatsForDisplay(
+                displayOperation.amountMsats,
+                amountDisplayMode,
+              )}
             </span>
           </p>
         )}
@@ -972,6 +1003,7 @@ function LightningSendScreen({
     quote: LightningQuote,
   ): Promise<FeatureResult<TrackedOperation>>;
 }) {
+  const amountDisplayMode = useAmountDisplayMode();
   const [manual, setManual] = useState('');
   const [showManual, setShowManual] = useState(false);
   const [offer, setOffer] = useState<LnurlPayOffer>();
@@ -1051,7 +1083,9 @@ function LightningSendScreen({
     }
     const selectedAmount =
       offer.fixedAmountMsats === undefined ? amount : undefined;
-    if (lnurlAmountError(offer, selectedAmount) !== undefined) {
+    if (
+      lnurlAmountError(offer, selectedAmount, amountDisplayMode) !== undefined
+    ) {
       return;
     }
     setBusy(true);
@@ -1147,7 +1181,10 @@ function LightningSendScreen({
         amountSats={
           liveOperation.amountMsats === undefined
             ? undefined
-            : formatMsatsCoinStandard(liveOperation.amountMsats)
+            : formatMsatsForDisplay(
+                liveOperation.amountMsats,
+                amountDisplayMode,
+              )
         }
         subtitle={
           unsuccessful
@@ -1184,11 +1221,15 @@ function LightningSendScreen({
   if (offer !== undefined && review === undefined) {
     const selectedAmount =
       offer.fixedAmountMsats === undefined ? amount : undefined;
-    const amountError = lnurlAmountError(offer, selectedAmount);
+    const amountError = lnurlAmountError(
+      offer,
+      selectedAmount,
+      amountDisplayMode,
+    );
     const fixedAmountLabel =
       offer.fixedAmountMsats === undefined
         ? undefined
-        : formatMsatsCoinStandard(offer.fixedAmountMsats);
+        : formatMsatsForDisplay(offer.fixedAmountMsats, amountDisplayMode);
     return (
       <section className="confirm-shell" aria-labelledby="lightning-send-title">
         <div className="confirm-topbar">
@@ -1246,7 +1287,10 @@ function LightningSendScreen({
   }
 
   if (review !== undefined) {
-    const amountLabel = formatMsatsCoinStandard(review.quote.amountMsats);
+    const amountLabel = formatMsatsForDisplay(
+      review.quote.amountMsats,
+      amountDisplayMode,
+    );
     return (
       <section className="confirm-shell" aria-labelledby="lightning-send-title">
         <div className="confirm-topbar">
@@ -1285,7 +1329,7 @@ function LightningSendScreen({
           <div className="pay-row">
             <span className="pay-label">Network fee</span>
             <span className="pay-value">
-              {formatMsatsCoinStandard(review.quote.feeMsats)}
+              {formatMsatsForDisplay(review.quote.feeMsats, amountDisplayMode)}
             </span>
           </div>
           <div className="pay-row">
@@ -1374,6 +1418,7 @@ function LightningSendScreen({
 function lnurlAmountError(
   offer: LnurlPayOffer,
   amountSats: string | undefined,
+  amountDisplayMode: AmountDisplayMode,
 ): string | undefined {
   if (offer.fixedAmountMsats !== undefined) {
     return undefined;
@@ -1387,7 +1432,7 @@ function lnurlAmountError(
       amountMsats < offer.minSendableMsats ||
       amountMsats > offer.maxSendableMsats
     ) {
-      return `Choose an amount from ${formatMsatsCoinStandard(offer.minSendableMsats)} to ${formatMsatsCoinStandard(offer.maxSendableMsats)}.`;
+      return `Choose an amount from ${formatMsatsForDisplay(offer.minSendableMsats, amountDisplayMode)} to ${formatMsatsForDisplay(offer.maxSendableMsats, amountDisplayMode)}.`;
     }
     return undefined;
   } catch {
@@ -1414,6 +1459,7 @@ function ActivityScreen({
     key: OperationKey,
   ): Promise<FeatureResult<ClearableSecretText>>;
 }) {
+  const amountDisplayMode = useAmountDisplayMode();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [visibleCount, setVisibleCount] = useState(ACTIVITY_PAGE_SIZE);
@@ -1500,7 +1546,7 @@ function ActivityScreen({
                   <span
                     className={`activity-amount ${incoming ? 'is-in' : 'is-out'}`}
                   >
-                    {formatSignedAmount(operation, incoming)}
+                    {formatSignedAmount(operation, incoming, amountDisplayMode)}
                   </span>
                   <span className="activity-chevron" aria-hidden="true">
                     <ChevronRightGlyph />
@@ -1738,15 +1784,18 @@ function TransactionDetailScreen({
 
 function SettingsScreen({
   snapshot,
+  displaySettings,
   securitySettings,
   onBack,
   onRevealMnemonic,
   onUpdateSecuritySettings,
+  onUpdateDisplaySettings,
   onErase,
   onLock,
   onOpenChat,
 }: {
   snapshot: WalletSnapshot;
+  displaySettings: WalletDisplaySettings;
   securitySettings: WalletSecuritySettings;
   onBack(): void;
   onRevealMnemonic(): Promise<FeatureResult<SecretMnemonic>>;
@@ -1754,6 +1803,9 @@ function SettingsScreen({
     inactivityTimeoutMs: number | null,
     backgroundTimeoutMs: number | null,
   ): Promise<FeatureResult<WalletSecuritySettings>>;
+  onUpdateDisplaySettings(
+    amountDisplayMode: AmountDisplayMode,
+  ): Promise<FeatureResult<WalletDisplaySettings>>;
   onErase(typedConfirmation: string): Promise<FeatureResult<void>>;
   onLock(): Promise<void>;
   onOpenChat?: () => void;
@@ -1762,6 +1814,9 @@ function SettingsScreen({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [eraseConfirmation, setEraseConfirmation] = useState('');
+  const [amountDisplayMode, setAmountDisplayMode] = useState<AmountDisplayMode>(
+    displaySettings.amountDisplayMode,
+  );
   const [inactivityTimeoutMs, setInactivityTimeoutMs] = useState<number | null>(
     securitySettings.inactivityTimeoutMs,
   );
@@ -1769,6 +1824,7 @@ function SettingsScreen({
     securitySettings.backgroundTimeoutMs,
   );
   const [settingsStatus, setSettingsStatus] = useState<string>();
+  const [displayStatus, setDisplayStatus] = useState<string>();
   const words = mnemonic?.reveal() ?? [];
   const automaticLockDisabled =
     inactivityTimeoutMs === null && backgroundTimeoutMs === null;
@@ -1821,6 +1877,19 @@ function SettingsScreen({
     setSettingsStatus('Automatic lock settings saved.');
   }
 
+  async function updateAmountDisplay() {
+    setBusy(true);
+    setError(undefined);
+    setDisplayStatus(undefined);
+    const result = await onUpdateDisplaySettings(amountDisplayMode);
+    setBusy(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setDisplayStatus('Amount display preference saved.');
+  }
+
   return (
     <section className="page-shell" aria-labelledby="settings-title">
       <div className="page-topbar">
@@ -1856,6 +1925,45 @@ function SettingsScreen({
           >
             Lock wallet
           </button>
+        </SettingsRow>
+        <SettingsRow icon={<BitcoinMark />} label="Display">
+          <div className="stack" aria-labelledby="amount-display-title">
+            <h2 id="amount-display-title" className="settings-panel-title">
+              Amount display
+            </h2>
+            <label>
+              Bitcoin amount format
+              <select
+                value={amountDisplayMode}
+                onChange={(event) => {
+                  setAmountDisplayMode(event.target.value as AmountDisplayMode);
+                  setDisplayStatus(undefined);
+                }}
+              >
+                <option value="bip177">BIP-177 (₿ base units)</option>
+                <option value="compact-hybrid">Compact hybrid (¢ / ₿)</option>
+              </select>
+            </label>
+            <p className="fine-print">
+              BIP-177 shows integral base units. Compact hybrid uses ¢ below one
+              legacy BTC and ₿ at or above it.
+            </p>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={
+                busy || amountDisplayMode === displaySettings.amountDisplayMode
+              }
+              onClick={() => void updateAmountDisplay()}
+            >
+              {busy ? 'Saving…' : 'Save display preference'}
+            </button>
+            {displayStatus !== undefined && (
+              <p className="fine-print" role="status">
+                {displayStatus}
+              </p>
+            )}
+          </div>
         </SettingsRow>
         <SettingsRow icon={<SeedGlyph />} label="Seed & PIN">
           {mnemonic === undefined ? (
