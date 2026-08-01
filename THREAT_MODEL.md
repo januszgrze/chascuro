@@ -148,6 +148,15 @@
   Partial amount RPCs, capability advertisement, durable batch reconciliation,
   multi-gateway regtest coverage, and independent review are required before
   MPP can be added safely.
+- A development-only two-federation consolidation spike can move funds from
+  the non-primary federation into the primary federation with one ordinary
+  Lightning payment before paying a fixed BOLT11 invoice. It is capped at
+  1,000 sats, requires an explicit build-time flag, binds both operations to
+  exact federation and gateway IDs, and never retries a consumed review. It
+  does not yet provide durable batch recovery, automatic reversal, or grouped
+  Activity. A browser failure may leave funds moved to the primary federation
+  without paying the merchant, so meaningful-value and production use remain
+  prohibited.
 - SDK 0.1.3 does not provide a hard maximum-fee submission argument. The adapter
   derives a quote from the selected gateway's recognized fee schedule, binds
   confirmation and submission to that exact gateway, and fails closed for

@@ -4,9 +4,11 @@ import {
   confirmEcashRedeem,
   confirmEcashSpend,
   confirmLightningQuote,
+  confirmPortfolioLightningPaymentPlan,
   federationId,
   isTerminalOperationStatus,
   MAX_CHAT_PAYMENT_SATS,
+  msats,
   type LnurlPaymentReview,
   type LnurlPayOffer,
   type LnurlPayOfferId,
@@ -14,6 +16,7 @@ import {
   parsePositiveSats,
   parseSats,
   publicWalletError,
+  quoteId,
   sensitiveInput,
   toPublicWalletError,
   WalletError,
@@ -21,10 +24,12 @@ import {
   type EcashPreview,
   type ClearableSecretText,
   type LightningInvoicePreview,
+  type LightningPaymentRoute,
   type LightningQuote,
   type LightningReceive,
   type Msats,
   type OperationKey,
+  type PortfolioLightningPaymentPlan,
   type SecretMnemonic,
   type TrackedOperation,
   type WalletOperation,
@@ -127,6 +132,10 @@ export {
 
 type Listener = () => void;
 
+const PORTFOLIO_PAYMENT_TEST_MAX_MSATS = 1_000_000n;
+const PORTFOLIO_PAYMENT_MIN_EXPIRY_MS = 10 * 60 * 1_000;
+const PORTFOLIO_OPERATION_WAIT_MS = 5 * 60 * 1_000;
+
 export class WalletAppController {
   private readonly listeners = new Set<Listener>();
   private readonly guard = new SessionGuard();
@@ -145,6 +154,7 @@ export class WalletAppController {
   private readonly visibilityListener: EventListener;
   private readonly disposableTestWallet: boolean;
   private readonly lnurlPayResolver: LnurlPayResolver;
+  private readonly portfolioPaymentTestEnabled: boolean;
   private readonly providedStore?: VaultStore;
   private storeInstance: VaultStore | undefined;
   private service: WalletService;
@@ -165,6 +175,11 @@ export class WalletAppController {
   private readonly irreversibleFeatureSubmissions = new Set<
     Promise<WalletFeatureResult<unknown>>
   >();
+  private readonly portfolioPaymentPlans = new Map<
+    string,
+    PortfolioLightningPaymentPlan
+  >();
+  private readonly submittedPortfolioPaymentPlans = new Set<string>();
   private identityCreationPending = false;
   private preSetupIdentityConfirmedAtMs: number | undefined;
   private bootStarted = false;
@@ -208,6 +223,10 @@ export class WalletAppController {
         import.meta.env.VITE_TEST_WALLET_BYPASS === 'true');
     this.lnurlPayResolver =
       dependencies.lnurlPayResolver ?? new BrowserLnurlPayResolver();
+    this.portfolioPaymentTestEnabled =
+      dependencies.portfolioPaymentTestEnabled ??
+      (import.meta.env.DEV &&
+        import.meta.env.VITE_ENABLE_MAINNET_CONSOLIDATION_TEST === 'true');
     this.visibilityListener = () => {
       if (this.visibilitySource?.visibilityState === 'visible') {
         queueMicrotask(() => {
@@ -1025,10 +1044,11 @@ export class WalletAppController {
     WalletFeatureResult<{
       preview: LightningInvoicePreview;
       quote: LightningQuote;
+      portfolioPlan?: PortfolioLightningPaymentPlan;
     }>
   > {
     return this.runWalletFeature(async (signal) => {
-      return this.createLightningQuote(
+      return this.createLightningPaymentReview(
         sensitiveInput(rawInvoice),
         parseSats(maximumFeeSats),
         signal,
@@ -1082,7 +1102,15 @@ export class WalletAppController {
   async payLightningQuote(
     preview: LightningInvoicePreview,
     quote: LightningQuote,
+    portfolioPlan?: PortfolioLightningPaymentPlan,
   ): Promise<WalletFeatureResult<TrackedOperation>> {
+    if (portfolioPlan !== undefined) {
+      return this.runWalletFeatureOnce(
+        `portfolio-lightning-pay:${portfolioPlan.planId}`,
+        (signal) =>
+          this.executePortfolioLightningPayment(preview, portfolioPlan, signal),
+      );
+    }
     return this.runWalletFeatureOnce(
       `lightning-pay:${quote.quoteId}`,
       (signal) =>
@@ -1436,6 +1464,8 @@ export class WalletAppController {
     this.lnurlPayResolver.clear();
     this.identityCreationPending = false;
     this.featureSubmissions.clear();
+    this.portfolioPaymentPlans.clear();
+    this.submittedPortfolioPaymentPlans.clear();
     this.inactivityLock.disarm();
     this.chatLifecycle.quiesce();
     this.update({
@@ -1480,6 +1510,8 @@ export class WalletAppController {
     this.lnurlPayResolver.clear();
     this.identityCreationPending = false;
     this.featureSubmissions.clear();
+    this.portfolioPaymentPlans.clear();
+    this.submittedPortfolioPaymentPlans.clear();
     this.visibilitySource?.removeEventListener(
       'visibilitychange',
       this.visibilityListener,
@@ -1545,6 +1577,395 @@ export class WalletAppController {
       signal,
     );
     return Object.freeze({ preview, quote });
+  }
+
+  private async createLightningPaymentReview(
+    invoice: ReturnType<typeof sensitiveInput>,
+    maximumFeeMsats: Msats,
+    signal: AbortSignal,
+  ): Promise<{
+    readonly preview: LightningInvoicePreview;
+    readonly quote: LightningQuote;
+    readonly portfolioPlan?: PortfolioLightningPaymentPlan;
+  }> {
+    const preview = await this.service.lightning.parseInvoice(invoice, signal);
+    if (
+      !this.portfolioPaymentTestEnabled ||
+      preview.amountMsats === undefined ||
+      this.state.walletSnapshot.connectedFederations.length !== 2
+    ) {
+      const quote = await this.service.lightning.quotePayment(
+        { preview, maximumFeeMsats },
+        signal,
+      );
+      return Object.freeze({ preview, quote });
+    }
+
+    const activeFederation = this.state.walletSnapshot.activeFederation;
+    const sourceFederation =
+      activeFederation === undefined
+        ? undefined
+        : this.state.walletSnapshot.connectedFederations.find(
+            (federation) =>
+              federation.federationId !== activeFederation.federationId,
+          );
+    if (activeFederation === undefined || sourceFederation === undefined) {
+      throw new WalletError('unsupported_feature');
+    }
+
+    const finalRoutes = await this.service.lightning.inspectPaymentRoutes(
+      preview.amountMsats,
+      signal,
+    );
+    const sinkRoute = selectPortfolioRoute(
+      finalRoutes,
+      activeFederation.federationId,
+    );
+    if (sinkRoute === undefined) {
+      throw new WalletError('gateway_unavailable');
+    }
+
+    const quote = await this.service.lightning.quotePaymentForRoute(
+      { preview, maximumFeeMsats },
+      sinkRoute,
+      signal,
+    );
+    const quotedSinkRoute = Object.freeze({
+      ...sinkRoute,
+      feeMsats: quote.feeMsats,
+    });
+    const finalCostMsats = msats(preview.amountMsats + quote.feeMsats);
+    if (quotedSinkRoute.balanceMsats >= finalCostMsats) {
+      return Object.freeze({ preview, quote });
+    }
+
+    if (
+      preview.amountMsats > PORTFOLIO_PAYMENT_TEST_MAX_MSATS ||
+      preview.expiresAtMs - this.now() < PORTFOLIO_PAYMENT_MIN_EXPIRY_MS
+    ) {
+      throw new WalletError('unsupported_feature');
+    }
+
+    const transferAmountMsats = msats(finalCostMsats - sinkRoute.balanceMsats);
+    const transferRoutes = await this.service.lightning.inspectPaymentRoutes(
+      transferAmountMsats,
+      signal,
+    );
+    const sourceRoute = selectPortfolioRoute(
+      transferRoutes,
+      sourceFederation.federationId,
+    );
+    if (sourceRoute === undefined) {
+      throw new WalletError('gateway_unavailable');
+    }
+    if (import.meta.env.DEV) {
+      const sourceFederationRoutes = transferRoutes.filter(
+        (route) => route.federationId === sourceFederation.federationId,
+      );
+      const sinkFederationRoutes = finalRoutes.filter(
+        (route) => route.federationId === activeFederation.federationId,
+      );
+      console.info('Chascuro portfolio payment diagnostics', {
+        event: 'routes_selected',
+        sourceGatewayHint: gatewayDiagnosticHint(sourceRoute.gatewayId),
+        sourceGatewayVetted: sourceRoute.vetted,
+        sourceGatewayCount: sourceFederationRoutes.length,
+        sourceVettedGatewayCount: sourceFederationRoutes.filter(
+          (route) => route.vetted,
+        ).length,
+        sinkGatewayHint: gatewayDiagnosticHint(sinkRoute.gatewayId),
+        sinkGatewayVetted: sinkRoute.vetted,
+        sinkGatewayCount: sinkFederationRoutes.length,
+        sinkVettedGatewayCount: sinkFederationRoutes.filter(
+          (route) => route.vetted,
+        ).length,
+      });
+    }
+    const estimatedTotalFeeMsats = msats(quote.feeMsats + sourceRoute.feeMsats);
+    if (estimatedTotalFeeMsats > maximumFeeMsats) {
+      throw new WalletError('fee_limit_exceeded');
+    }
+    if (sourceRoute.balanceMsats < transferAmountMsats + sourceRoute.feeMsats) {
+      throw new WalletError('insufficient_balance');
+    }
+
+    const plan = Object.freeze({
+      planId: quoteId(`portfolio-ln-${crypto.randomUUID()}`),
+      targetFingerprint: preview.fingerprint,
+      amountMsats: preview.amountMsats,
+      expiresAtMs: quote.expiresAtMs,
+      maximumTotalFeeMsats: maximumFeeMsats,
+      estimatedTotalFeeMsats,
+      transferAmountMsats,
+      transferFeeMsats: sourceRoute.feeMsats,
+      finalPaymentFeeMsats: quote.feeMsats,
+      sinkRoute: quotedSinkRoute,
+      sourceRoute,
+    }) satisfies PortfolioLightningPaymentPlan;
+    this.portfolioPaymentPlans.set(plan.planId, plan);
+    return Object.freeze({ preview, quote, portfolioPlan: plan });
+  }
+
+  private async executePortfolioLightningPayment(
+    preview: LightningInvoicePreview,
+    submittedPlan: PortfolioLightningPaymentPlan,
+    signal: AbortSignal,
+  ): Promise<TrackedOperation> {
+    const plan = this.portfolioPaymentPlans.get(submittedPlan.planId);
+    if (
+      plan === undefined ||
+      plan !== submittedPlan ||
+      this.submittedPortfolioPaymentPlans.has(plan.planId)
+    ) {
+      throw new WalletError('operation_failed');
+    }
+    confirmPortfolioLightningPaymentPlan(plan, preview.fingerprint, this.now());
+    this.submittedPortfolioPaymentPlans.add(plan.planId);
+    this.portfolioPaymentPlans.delete(plan.planId);
+
+    const metadataBase = {
+      chascuro_batch_id: plan.planId,
+    } as const;
+    let transferStage: 'not_submitted' | 'submitted' | 'settled' =
+      'not_submitted';
+    let coordinatorStep:
+      | 'validating_transfer_route'
+      | 'creating_transfer_invoice'
+      | 'persisting_transfer_invoice'
+      | 'quoting_transfer'
+      | 'submitting_transfer'
+      | 'waiting_transfer'
+      | 'waiting_receive'
+      | 'refreshing_balance'
+      | 'quoting_merchant'
+      | 'submitting_merchant' = 'validating_transfer_route';
+    let receive: LightningReceive | undefined;
+
+    try {
+      const transferRoutes = await this.service.lightning.inspectPaymentRoutes(
+        plan.transferAmountMsats,
+        signal,
+      );
+      const sourceRoute = transferRoutes.find(
+        (route) =>
+          route.federationId === plan.sourceRoute.federationId &&
+          route.gatewayId === plan.sourceRoute.gatewayId,
+      );
+      if (sourceRoute === undefined) {
+        throw new WalletError('gateway_unavailable');
+      }
+      if (
+        sourceRoute.balanceMsats <
+          plan.transferAmountMsats + sourceRoute.feeMsats ||
+        sourceRoute.feeMsats + plan.finalPaymentFeeMsats >
+          plan.maximumTotalFeeMsats
+      ) {
+        throw new WalletError(
+          sourceRoute.balanceMsats <
+            plan.transferAmountMsats + sourceRoute.feeMsats
+            ? 'insufficient_balance'
+            : 'fee_limit_exceeded',
+        );
+      }
+
+      coordinatorStep = 'creating_transfer_invoice';
+      receive = await this.service.lightning.createInvoiceForRoute(
+        {
+          amountMsats: plan.transferAmountMsats,
+          description: 'Chascuro balance consolidation',
+          expirySeconds: 600,
+        },
+        plan.sinkRoute,
+        {
+          ...metadataBase,
+          chascuro_step: 'rebalance-receive',
+        },
+        signal,
+      );
+      const repository = this.activityRepository;
+      if (repository === undefined) {
+        throw new WalletError('storage_unavailable');
+      }
+      coordinatorStep = 'persisting_transfer_invoice';
+      try {
+        await repository.putSecret(
+          'lightning-invoice',
+          receive.operation.key,
+          receive.invoice,
+        );
+      } catch {
+        throw new WalletError('storage_unavailable');
+      }
+
+      const transferPreview = await this.service.lightning.parseInvoice(
+        sensitiveInput(receive.invoice.reveal()),
+        signal,
+      );
+      receive.invoice.clear();
+      const transferFeeLimitMsats = msats(
+        plan.maximumTotalFeeMsats - plan.finalPaymentFeeMsats,
+      );
+      coordinatorStep = 'quoting_transfer';
+      const transferQuote = await this.service.lightning.quotePaymentForRoute(
+        {
+          preview: transferPreview,
+          maximumFeeMsats: transferFeeLimitMsats,
+        },
+        plan.sourceRoute,
+        signal,
+      );
+      coordinatorStep = 'submitting_transfer';
+      const transfer = await this.service.lightning.payForRoute(
+        confirmLightningQuote(
+          transferQuote,
+          transferPreview.fingerprint,
+          this.now(),
+        ),
+        plan.sourceRoute,
+        {
+          ...metadataBase,
+          chascuro_step: 'rebalance-send',
+        },
+        signal,
+      );
+      transferStage = 'submitted';
+      coordinatorStep = 'waiting_transfer';
+      const transferOperation = await this.waitForTerminalOperation(
+        transfer.operation.key,
+        signal,
+      );
+      if (transferOperation.status !== 'settled') {
+        transferStage = 'not_submitted';
+        throw new WalletError('operation_failed');
+      }
+      transferStage = 'settled';
+      coordinatorStep = 'waiting_receive';
+      const receiveOperation = await this.waitForTerminalOperation(
+        receive.operation.key,
+        signal,
+      );
+      if (receiveOperation.status !== 'settled') {
+        throw new WalletError('operation_reconciliation_required');
+      }
+
+      coordinatorStep = 'refreshing_balance';
+      await this.service.balance.refresh(signal);
+      const sinkBalance = this.service
+        .getSnapshot()
+        .connectedFederations.find(
+          (federation) =>
+            federation.federationId === plan.sinkRoute.federationId,
+        )?.balanceMsats;
+      const finalFeeLimitMsats = msats(
+        plan.maximumTotalFeeMsats - transferQuote.feeMsats,
+      );
+      if (sinkBalance === undefined) {
+        throw new WalletError('operation_reconciliation_required');
+      }
+
+      coordinatorStep = 'quoting_merchant';
+      const finalQuote = await this.service.lightning.quotePaymentForRoute(
+        { preview, maximumFeeMsats: finalFeeLimitMsats },
+        plan.sinkRoute,
+        signal,
+      );
+      if (sinkBalance < plan.amountMsats + finalQuote.feeMsats) {
+        throw new WalletError('insufficient_balance');
+      }
+      signal.throwIfAborted();
+      if (this.state.phase !== 'home') {
+        throw new WalletError('wallet_locked');
+      }
+      coordinatorStep = 'submitting_merchant';
+      return await this.service.lightning.payForRoute(
+        confirmLightningQuote(finalQuote, preview.fingerprint, this.now()),
+        plan.sinkRoute,
+        {
+          ...metadataBase,
+          chascuro_step: 'merchant-send',
+        },
+        signal,
+      );
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.info('Chascuro portfolio payment diagnostics', {
+          event: 'coordinator_failed',
+          step: coordinatorStep,
+          transferStage,
+          errorCode:
+            error instanceof WalletError ? error.code : 'unexpected_error',
+        });
+      }
+      if (transferStage === 'settled') {
+        throw new WalletError('portfolio_payment_incomplete');
+      }
+      if (transferStage === 'submitted') {
+        throw new WalletError('operation_reconciliation_required');
+      }
+      throw error;
+    } finally {
+      receive?.invoice.clear();
+    }
+  }
+
+  private async waitForTerminalOperation(
+    key: OperationKey,
+    signal: AbortSignal,
+  ): Promise<WalletOperation> {
+    signal.throwIfAborted();
+    const existing = await this.service.operations.get(key);
+    if (existing !== undefined && isTerminalOperationStatus(existing.status)) {
+      return existing;
+    }
+
+    return await new Promise<WalletOperation>((resolve, reject) => {
+      let finished = false;
+      let unsubscribe: () => void = () => undefined;
+      const timeout = globalThis.setTimeout(
+        () => finish(undefined, new WalletError('request_timed_out')),
+        PORTFOLIO_OPERATION_WAIT_MS,
+      );
+      const abort = () =>
+        finish(undefined, new DOMException('Request aborted.', 'AbortError'));
+      const finish = (operation?: WalletOperation, error?: unknown) => {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        globalThis.clearTimeout(timeout);
+        signal.removeEventListener('abort', abort);
+        unsubscribe();
+        if (operation !== undefined) {
+          resolve(operation);
+        } else {
+          reject(error);
+        }
+      };
+      const release = this.service.operations.subscribe(key, (operation) => {
+        if (isTerminalOperationStatus(operation.status)) {
+          finish(operation);
+        }
+      });
+      unsubscribe = release;
+      if (finished) {
+        unsubscribe();
+      }
+      signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) {
+        abort();
+      }
+      void this.service.operations.get(key).then(
+        (operation) => {
+          if (
+            operation !== undefined &&
+            isTerminalOperationStatus(operation.status)
+          ) {
+            finish(operation);
+          }
+        },
+        (error) => finish(undefined, error),
+      );
+    });
   }
 
   private async createEcashExport(
@@ -2144,6 +2565,27 @@ function degradedChatAvailability(
       reason === 'group_out_of_sync' ||
       reason === 'internal',
   });
+}
+
+function selectPortfolioRoute(
+  routes: readonly LightningPaymentRoute[],
+  federation: LightningPaymentRoute['federationId'],
+): LightningPaymentRoute | undefined {
+  return routes
+    .filter((route) => route.federationId === federation)
+    .sort(
+      (left, right) =>
+        Number(right.vetted) - Number(left.vetted) ||
+        (left.feeMsats < right.feeMsats
+          ? -1
+          : left.feeMsats > right.feeMsats
+            ? 1
+            : left.gatewayId.localeCompare(right.gatewayId)),
+    )[0];
+}
+
+function gatewayDiagnosticHint(gatewayId: string): string {
+  return gatewayId.length <= 12 ? gatewayId : `${gatewayId.slice(0, 12)}…`;
 }
 
 function clearFeatureSecrets(value: unknown): void {

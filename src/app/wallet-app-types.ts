@@ -84,6 +84,7 @@ export interface WalletAppDependencies {
   visibilitySource?: WalletVisibilitySource | null;
   disposableTestWallet?: boolean;
   lnurlPayResolver?: LnurlPayResolver;
+  portfolioPaymentTestEnabled?: boolean;
 }
 
 export interface WalletOwnership {

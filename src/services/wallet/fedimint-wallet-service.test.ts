@@ -12,6 +12,7 @@ import {
   type OperationKey,
 } from '../../domain';
 import {
+  classifyLightningPaySubmissionError,
   FedimintWalletService,
   normalizeInternalPayState,
   normalizeLnPayState,
@@ -655,6 +656,38 @@ describe('Fedimint SDK state normalization', () => {
 });
 
 describe('Fedimint Lightning payment boundary', () => {
+  it('classifies payment submission errors without returning their contents', () => {
+    expect(
+      classifyLightningPaySubmissionError(
+        'Insufficient balance: requested 12000 but only 10000 available',
+      ),
+    ).toBe('insufficient_balance');
+    expect(
+      classifyLightningPaySubmissionError(
+        'No route for invoice lnbc1sensitiveinvoice',
+      ),
+    ).toBe('routing');
+    expect(
+      classifyLightningPaySubmissionError('Gateway is not available'),
+    ).toBe('gateway_unavailable');
+    expect(
+      classifyLightningPaySubmissionError('Could not contact gateway'),
+    ).toBe('gateway_unreachable');
+    expect(
+      classifyLightningPaySubmissionError(
+        'Unexpected gateway id returned: sensitive-id',
+      ),
+    ).toBe('gateway_identity_mismatch');
+    expect(
+      classifyLightningPaySubmissionError(
+        'OutgoingContract was not created in the federation',
+      ),
+    ).toBe('contract_not_created');
+    expect(classifyLightningPaySubmissionError('opaque secret value')).toBe(
+      'unknown',
+    );
+  });
+
   it('parses BOLT11 timestamps and known gateway fee formats', () => {
     const invoice = testInvoice('lnbc', 1_700_000_000);
     expect(parseBolt11Header(invoice)).toEqual({
@@ -699,6 +732,9 @@ describe('Fedimint Lightning payment boundary', () => {
       fee: 1_100,
     });
     const wallet = {
+      balance: {
+        getBalance: vi.fn().mockResolvedValue(200_000),
+      },
       lightning: {
         updateGatewayCache: vi.fn().mockResolvedValue(undefined),
         listGateways: vi
@@ -748,19 +784,34 @@ describe('Fedimint Lightning payment boundary', () => {
       sensitiveInput(invoice),
     );
     expect(director.parseBolt11InvoicePayload).toHaveBeenCalledWith(invoice);
-    const quote = await service.lightning.quotePayment({
-      preview,
-      maximumFeeMsats: msats(2_000n),
-    });
+    const route = (
+      await service.lightning.inspectPaymentRoutes(preview.amountMsats!)
+    )[0]!;
+    const quote = await service.lightning.quotePaymentForRoute(
+      {
+        preview,
+        maximumFeeMsats: msats(2_000n),
+      },
+      route,
+    );
     expect(quote).toMatchObject({
       amountMsats: 100_000n,
       feeMsats: 1_100n,
+      federationId: activeFederation.federationId,
       gatewayId: 'gateway-a',
     });
-    const tracked = await service.lightning.pay(
+    const tracked = await service.lightning.payForRoute(
       confirmLightningQuote(quote, preview.fingerprint, Date.now()),
+      route,
+      {
+        chascuro_batch_id: 'batch-a',
+        chascuro_step: 'merchant-send',
+      },
     );
-    expect(payInvoice).toHaveBeenCalledWith(invoice, gateway, {});
+    expect(payInvoice).toHaveBeenCalledWith(invoice, gateway, {
+      chascuro_batch_id: 'batch-a',
+      chascuro_step: 'merchant-send',
+    });
     expect(tracked.operation).toMatchObject({
       kind: 'lightning_send',
       status: 'pending',

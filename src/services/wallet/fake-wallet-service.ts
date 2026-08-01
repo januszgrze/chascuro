@@ -30,6 +30,7 @@ import {
   type FederationDescriptor,
   type FederationJoinApproval,
   type LightningInvoicePreview,
+  type LightningPaymentRoute,
   type LightningPaymentIntent,
   type LightningQuote,
   type LightningReceive,
@@ -63,6 +64,7 @@ export interface FakeWalletOptions {
   idFactory?: () => string;
   latencyMs?: number;
   initialBalanceMsats?: Msats;
+  initialFederationBalancesMsats?: Readonly<Record<string, Msats>>;
   preview?: Omit<FederationCandidate, 'candidateId' | 'expiresAtMs'>;
   previewResolver?: (
     inviteCode: string,
@@ -196,6 +198,31 @@ export class FakeWalletService implements WalletService {
       signal?: AbortSignal,
     ): Promise<TrackedOperation> =>
       this.payLightningInvoice(confirmedQuote, signal),
+    inspectPaymentRoutes: (
+      amountMsats: Msats,
+      signal?: AbortSignal,
+    ): Promise<readonly LightningPaymentRoute[]> =>
+      this.inspectLightningPaymentRoutes(amountMsats, signal),
+    createInvoiceForRoute: (
+      intent: LightningReceiveIntent,
+      route: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
+      metadata: Readonly<Record<string, string>>,
+      signal?: AbortSignal,
+    ): Promise<LightningReceive> =>
+      this.createLightningInvoiceForRoute(intent, route, metadata, signal),
+    quotePaymentForRoute: (
+      intent: LightningPaymentIntent,
+      route: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
+      signal?: AbortSignal,
+    ): Promise<LightningQuote> =>
+      this.quoteLightningPaymentForRoute(intent, route, signal),
+    payForRoute: (
+      confirmedQuote: ConfirmedLightningQuote,
+      route: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
+      metadata: Readonly<Record<string, string>>,
+      signal?: AbortSignal,
+    ): Promise<TrackedOperation> =>
+      this.payLightningInvoiceForRoute(confirmedQuote, route, metadata, signal),
   };
 
   readonly operations = {
@@ -235,6 +262,8 @@ export class FakeWalletService implements WalletService {
   private readonly idFactory: () => string;
   private readonly latencyMs: number;
   private readonly initialBalanceMsats: Msats;
+  private readonly initialFederationBalancesMsats:
+    Readonly<Record<string, Msats>> | undefined;
   private readonly preview: Omit<
     FederationCandidate,
     'candidateId' | 'expiresAtMs'
@@ -266,6 +295,8 @@ export class FakeWalletService implements WalletService {
     this.latencyMs = options.latencyMs ?? 150;
     this.initialBalanceMsats =
       options.initialBalanceMsats ?? msats(25_000_000n);
+    this.initialFederationBalancesMsats =
+      options.initialFederationBalancesMsats;
     this.preview = options.preview ?? DEFAULT_PREVIEW;
     this.previewResolver = options.previewResolver;
     this.lightningFeeQuoteAvailable =
@@ -299,7 +330,7 @@ export class FakeWalletService implements WalletService {
       this.federations.set(federation.federationId, federation);
       this.federationBalances.set(
         federation.federationId,
-        this.initialBalanceMsats,
+        this.initialBalanceFor(federation),
       );
     }
     const activeFederation = input.activeFederation ?? restoredFederations[0];
@@ -476,7 +507,7 @@ export class FakeWalletService implements WalletService {
       this.federations.set(activeFederation.federationId, activeFederation);
       this.federationBalances.set(
         activeFederation.federationId,
-        this.initialBalanceMsats,
+        this.initialBalanceFor(activeFederation),
       );
       this.updateSnapshot({
         lifecycle: 'ready',
@@ -525,7 +556,7 @@ export class FakeWalletService implements WalletService {
     this.federations.set(activeFederation.federationId, activeFederation);
     this.federationBalances.set(
       activeFederation.federationId,
-      this.initialBalanceMsats,
+      this.initialBalanceFor(activeFederation),
     );
     this.updateSnapshot({
       lifecycle: 'ready',
@@ -861,6 +892,40 @@ export class FakeWalletService implements WalletService {
 
     const activeFederation = this.selectReceiveFederation(intent.amountMsats);
     signal?.throwIfAborted();
+    return this.createLightningInvoiceOnFederation(intent, activeFederation);
+  }
+
+  private async createLightningInvoiceForRoute(
+    intent: LightningReceiveIntent,
+    route: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
+    metadata: Readonly<Record<string, string>>,
+    signal?: AbortSignal,
+  ): Promise<LightningReceive> {
+    this.assertReady();
+    validateOperationMetadata(metadata);
+    if (
+      intent.amountMsats === 0n ||
+      !Number.isSafeInteger(intent.expirySeconds) ||
+      intent.expirySeconds < 60
+    ) {
+      throw new WalletError('invalid_input');
+    }
+    signal?.throwIfAborted();
+    const federation = this.federations.get(route.federationId);
+    if (
+      federation === undefined ||
+      !this.capabilitiesFor(federation).lightning ||
+      route.gatewayId !== 'fake-gateway'
+    ) {
+      throw new WalletError('gateway_unavailable');
+    }
+    return this.createLightningInvoiceOnFederation(intent, federation);
+  }
+
+  private createLightningInvoiceOnFederation(
+    intent: LightningReceiveIntent,
+    activeFederation: ActiveFederation,
+  ): LightningReceive {
     const expiresAtMs = this.clock() + intent.expirySeconds * 1000;
     const operation = this.createOperation(
       activeFederation,
@@ -900,6 +965,38 @@ export class FakeWalletService implements WalletService {
         `secret:lightning-invoice:${operation.key.operationId}`,
       ),
     });
+  }
+
+  private async inspectLightningPaymentRoutes(
+    amountMsats: Msats,
+    signal?: AbortSignal,
+  ): Promise<readonly LightningPaymentRoute[]> {
+    this.assertReady();
+    if (amountMsats <= 0n || !this.lightningFeeQuoteAvailable) {
+      throw new WalletError(
+        amountMsats <= 0n ? 'invalid_input' : 'fee_quote_unavailable',
+      );
+    }
+    await wait(this.latencyMs, [signal, this.lifetime.signal]);
+    const feeMsats = msats(maxBigInt(1_000n, amountMsats / 100n));
+    return Object.freeze(
+      [...this.federations.values()]
+        .filter((federation) => this.capabilitiesFor(federation).lightning)
+        .sort((left, right) =>
+          left.federationId.localeCompare(right.federationId),
+        )
+        .map((federation) =>
+          Object.freeze({
+            federationId: federation.federationId,
+            federationDisplayName: federation.displayName,
+            gatewayId: 'fake-gateway',
+            balanceMsats:
+              this.federationBalances.get(federation.federationId) ?? msats(0n),
+            feeMsats,
+            vetted: true,
+          }),
+        ),
+    );
   }
 
   private async quoteLightningPayment(
@@ -956,6 +1053,7 @@ export class FakeWalletService implements WalletService {
       feeMsats,
       maximumFeeMsats: intent.maximumFeeMsats,
       expiresAtMs: Math.min(intent.preview.expiresAtMs, this.clock() + 60_000),
+      federationId: sourceFederation.federationId,
       gatewayId: 'fake-gateway',
     });
     this.quotes.set(quote.quoteId, {
@@ -966,9 +1064,70 @@ export class FakeWalletService implements WalletService {
     return quote;
   }
 
+  private async quoteLightningPaymentForRoute(
+    intent: LightningPaymentIntent,
+    route: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
+    signal?: AbortSignal,
+  ): Promise<LightningQuote> {
+    this.assertReady();
+    const primaryFederation = this.requireActiveFederation();
+    const rawInvoice = this.parsedInvoices.get(intent.preview.fingerprint);
+    if (
+      rawInvoice === undefined ||
+      intent.preview.amountMsats === undefined ||
+      intent.preview.amountMsats <= 0n
+    ) {
+      throw new WalletError('invalid_input');
+    }
+    if (intent.preview.expiresAtMs <= this.clock()) {
+      throw new WalletError('invoice_expired');
+    }
+    if (intent.preview.network !== primaryFederation.network) {
+      throw new WalletError('invoice_wrong_network');
+    }
+    const routeMatch = (
+      await this.inspectLightningPaymentRoutes(
+        intent.preview.amountMsats,
+        signal,
+      )
+    ).find(
+      (candidate) =>
+        candidate.federationId === route.federationId &&
+        candidate.gatewayId === route.gatewayId,
+    );
+    if (routeMatch === undefined) {
+      throw new WalletError('gateway_unavailable');
+    }
+    if (routeMatch.feeMsats > intent.maximumFeeMsats) {
+      throw new WalletError('fee_limit_exceeded');
+    }
+    const federation = this.federations.get(routeMatch.federationId);
+    if (federation === undefined) {
+      throw new WalletError('federation_unavailable');
+    }
+
+    const quote: LightningQuote = Object.freeze({
+      quoteId: quoteId(`fake-quote-${this.safeId()}`),
+      invoiceFingerprint: intent.preview.fingerprint,
+      amountMsats: intent.preview.amountMsats,
+      feeMsats: routeMatch.feeMsats,
+      maximumFeeMsats: intent.maximumFeeMsats,
+      expiresAtMs: Math.min(intent.preview.expiresAtMs, this.clock() + 60_000),
+      federationId: federation.federationId,
+      gatewayId: routeMatch.gatewayId,
+    });
+    this.quotes.set(quote.quoteId, {
+      quote,
+      invoice: rawInvoice.input,
+      federation,
+    });
+    return quote;
+  }
+
   private async payLightningInvoice(
     confirmed: ConfirmedLightningQuote,
     signal?: AbortSignal,
+    expectedRoute?: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
   ): Promise<TrackedOperation> {
     this.assertReady();
     const duplicate = this.submittedQuotes.get(confirmed.quote.quoteId);
@@ -981,7 +1140,10 @@ export class FakeWalletService implements WalletService {
     if (
       pending === undefined ||
       pending.quote.invoiceFingerprint !== confirmed.quote.invoiceFingerprint ||
-      confirmed.quote.expiresAtMs <= this.clock()
+      confirmed.quote.expiresAtMs <= this.clock() ||
+      (expectedRoute !== undefined &&
+        (pending.federation.federationId !== expectedRoute.federationId ||
+          pending.quote.gatewayId !== expectedRoute.gatewayId))
     ) {
       throw new WalletError('fee_quote_unavailable');
     }
@@ -1016,6 +1178,16 @@ export class FakeWalletService implements WalletService {
       this.scheduleTerminal(operation.key, 'settled');
     }
     return tracked;
+  }
+
+  private payLightningInvoiceForRoute(
+    confirmed: ConfirmedLightningQuote,
+    route: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
+    metadata: Readonly<Record<string, string>>,
+    signal?: AbortSignal,
+  ): Promise<TrackedOperation> {
+    validateOperationMetadata(metadata);
+    return this.payLightningInvoice(confirmed, signal, route);
   }
 
   private async listOperations(
@@ -1240,6 +1412,13 @@ export class FakeWalletService implements WalletService {
     return federation;
   }
 
+  private initialBalanceFor(federation: ActiveFederation): Msats {
+    return (
+      this.initialFederationBalancesMsats?.[federation.federationId] ??
+      this.initialBalanceMsats
+    );
+  }
+
   private safeId(): string {
     const normalized = this.idFactory()
       .toLowerCase()
@@ -1291,6 +1470,24 @@ function fingerprintText(value: string): string {
 
 function maxBigInt(left: bigint, right: bigint): bigint {
   return left > right ? left : right;
+}
+
+function validateOperationMetadata(
+  metadata: Readonly<Record<string, string>>,
+): void {
+  const entries = Object.entries(metadata);
+  if (
+    entries.length > 4 ||
+    entries.some(
+      ([key, value]) =>
+        key.length === 0 ||
+        key.length > 64 ||
+        value.length === 0 ||
+        value.length > 128,
+    )
+  ) {
+    throw new WalletError('invalid_input');
+  }
 }
 
 async function wait(

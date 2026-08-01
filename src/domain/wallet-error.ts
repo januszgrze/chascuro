@@ -39,6 +39,7 @@ export const WALLET_ERROR_CODES = [
   'another_wallet_tab_active',
   'erase_failed',
   'operation_reconciliation_required',
+  'portfolio_payment_incomplete',
   'operation_failed',
   'operation_expired',
   'sdk_unavailable',
@@ -273,6 +274,12 @@ const ERROR_DEFINITIONS = {
     category: 'operation',
     retryable: true,
     message: 'Refresh the wallet to reconcile pending activity.',
+  },
+  portfolio_payment_incomplete: {
+    category: 'operation',
+    retryable: false,
+    message:
+      'Funds were moved to the primary federation, but the merchant payment was not completed. Refresh balances and review Activity before trying again.',
   },
   operation_failed: {
     category: 'operation',

@@ -16,6 +16,7 @@ import {
   type LnurlPayOfferId,
   type LnurlSuccessAction,
   type OperationKey,
+  type PortfolioLightningPaymentPlan,
   type SecretMnemonic,
   type TrackedOperation,
   type WalletOperation,
@@ -111,6 +112,7 @@ interface HomeScreenProps {
     FeatureResult<{
       preview: LightningInvoicePreview;
       quote: LightningQuote;
+      portfolioPlan?: PortfolioLightningPaymentPlan;
     }>
   >;
   onResolveLnurlPay(input: string): Promise<FeatureResult<LnurlPayOffer>>;
@@ -122,6 +124,7 @@ interface HomeScreenProps {
   onPayLightningQuote(
     preview: LightningInvoicePreview,
     quote: LightningQuote,
+    portfolioPlan?: PortfolioLightningPaymentPlan,
   ): Promise<FeatureResult<TrackedOperation>>;
   onReconcile(): Promise<FeatureResult<void>>;
   onRevealMnemonic(): Promise<FeatureResult<SecretMnemonic>>;
@@ -959,6 +962,7 @@ function LightningSendScreen({
     FeatureResult<{
       preview: LightningInvoicePreview;
       quote: LightningQuote;
+      portfolioPlan?: PortfolioLightningPaymentPlan;
     }>
   >;
   onResolveLnurl(input: string): Promise<FeatureResult<LnurlPayOffer>>;
@@ -970,6 +974,7 @@ function LightningSendScreen({
   onPay(
     preview: LightningInvoicePreview,
     quote: LightningQuote,
+    portfolioPlan?: PortfolioLightningPaymentPlan,
   ): Promise<FeatureResult<TrackedOperation>>;
 }) {
   const [manual, setManual] = useState('');
@@ -980,9 +985,11 @@ function LightningSendScreen({
     preview: LightningInvoicePreview;
     quote: LightningQuote;
     successAction?: LnurlSuccessAction;
+    portfolioPlan?: PortfolioLightningPaymentPlan;
   }>();
   const [operation, setOperation] = useState<WalletOperation>();
   const [busy, setBusy] = useState(false);
+  const [paymentAttempted, setPaymentAttempted] = useState(false);
   const [error, setError] = useState<string>();
   const manualInputRef = useRef<HTMLTextAreaElement>(null);
   const nowMs = useCurrentTime(review !== undefined);
@@ -1005,6 +1012,7 @@ function LightningSendScreen({
     }
     setManual('');
     setShowManual(false);
+    setPaymentAttempted(false);
     setReview(result.value);
   }
 
@@ -1067,6 +1075,7 @@ function LightningSendScreen({
       return;
     }
     setReview(result.value);
+    setPaymentAttempted(false);
   }
 
   async function pasteFromClipboard() {
@@ -1089,8 +1098,13 @@ function LightningSendScreen({
       return;
     }
     setBusy(true);
+    setPaymentAttempted(true);
     setError(undefined);
-    const result = await onPay(review.preview, review.quote);
+    const result = await onPay(
+      review.preview,
+      review.quote,
+      review.portfolioPlan,
+    );
     setBusy(false);
     if (!result.ok) {
       setError(result.error);
@@ -1258,6 +1272,7 @@ function LightningSendScreen({
             disabled={busy}
             onClick={() => {
               setReview(undefined);
+              setPaymentAttempted(false);
               setError(undefined);
             }}
           >
@@ -1284,13 +1299,53 @@ function LightningSendScreen({
               <span className="pay-value">{review.preview.description}</span>
             </div>
           )}
-          <div className="pay-row">
-            <span className="pay-label">Network fee</span>
-            <span className="pay-value">
-              <BitcoinMark className="btc-symbol" />{' '}
-              {formatMsatsAsSats(review.quote.feeMsats)}
-            </span>
-          </div>
+          {review.portfolioPlan === undefined ? (
+            <div className="pay-row">
+              <span className="pay-label">Network fee</span>
+              <span className="pay-value">
+                <BitcoinMark className="btc-symbol" />{' '}
+                {formatMsatsAsSats(review.quote.feeMsats)}
+              </span>
+            </div>
+          ) : (
+            <>
+              <div className="pay-row">
+                <span className="pay-label">From</span>
+                <span className="pay-value">
+                  {review.portfolioPlan.sourceRoute.federationDisplayName} →{' '}
+                  {review.portfolioPlan.sinkRoute.federationDisplayName}
+                </span>
+              </div>
+              <div className="pay-row">
+                <span className="pay-label">Funds moved internally</span>
+                <span className="pay-value">
+                  <BitcoinMark className="btc-symbol" />{' '}
+                  {formatMsatsAsSats(review.portfolioPlan.transferAmountMsats)}
+                </span>
+              </div>
+              <div className="pay-row">
+                <span className="pay-label">Transfer fee</span>
+                <span className="pay-value">
+                  <BitcoinMark className="btc-symbol" />{' '}
+                  {formatMsatsAsSats(review.portfolioPlan.transferFeeMsats)}
+                </span>
+              </div>
+              <div className="pay-row">
+                <span className="pay-label">Payment fee</span>
+                <span className="pay-value">
+                  <BitcoinMark className="btc-symbol" />{' '}
+                  {formatMsatsAsSats(review.portfolioPlan.finalPaymentFeeMsats)}
+                </span>
+              </div>
+              <div className="pay-row">
+                <span className="pay-label">Maximum fees</span>
+                <span className="pay-value">
+                  <BitcoinMark className="btc-symbol" />{' '}
+                  {formatMsatsAsSats(review.portfolioPlan.maximumTotalFeeMsats)}
+                </span>
+              </div>
+            </>
+          )}
           <div className="pay-row">
             <span className="pay-label">Network</span>
             <span className="pay-value">{review.preview.network}</span>
@@ -1302,16 +1357,41 @@ function LightningSendScreen({
             </span>
           </div>
         </div>
+        {review.portfolioPlan !== undefined && (
+          <div className="notice" role="status">
+            <strong>Experimental combined payment</strong>
+            <p>
+              Keep Chascuro open. It will move funds between federations before
+              paying this invoice.
+            </p>
+          </div>
+        )}
         <ScreenError message={error} />
+        {review.portfolioPlan !== undefined &&
+          paymentAttempted &&
+          error !== undefined && (
+            <div className="notice" role="alert">
+              <strong>Do not retry this review.</strong>
+              <p>
+                Refresh balances and inspect Activity before scanning again.
+              </p>
+            </div>
+          )}
         <button
           className="cta-pay"
           type="button"
-          disabled={busy}
+          disabled={
+            busy || (review.portfolioPlan !== undefined && paymentAttempted)
+          }
           onClick={() => void pay()}
         >
           <BoltIcon size={20} />
           {busy ? (
-            'Submitting…'
+            review.portfolioPlan === undefined ? (
+              'Submitting…'
+            ) : (
+              'Consolidating and paying…'
+            )
           ) : (
             <>
               Pay <BitcoinMark className="btc-symbol" /> {amountLabel}

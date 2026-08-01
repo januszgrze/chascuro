@@ -342,6 +342,65 @@ describe('FakeWalletService', () => {
     receive.invoice.clear();
   });
 
+  it('binds a consolidation invoice and payment to exact federations', async () => {
+    const primary = testFederation('fed-a', 'client-a');
+    const secondary = testFederation('fed-b', 'client-b');
+    const service = new FakeWalletService({
+      latencyMs: 0,
+      initialFederationBalancesMsats: {
+        'fed-a': msats(70_000n),
+        'fed-b': msats(40_000n),
+      },
+      autoSettlePayments: false,
+      clock: () => 1_000,
+      idFactory: () => 'route-bound-id',
+    });
+    await service.open({
+      activeFederation: primary,
+      federations: [primary, secondary],
+    });
+    const routes = await service.lightning.inspectPaymentRoutes(msats(20_000n));
+    const sink = routes.find((route) => route.federationId === 'fed-a');
+    const source = routes.find((route) => route.federationId === 'fed-b');
+    expect(sink).toBeDefined();
+    expect(source).toBeDefined();
+
+    const receive = await service.lightning.createInvoiceForRoute(
+      { amountMsats: msats(20_000n), expirySeconds: 600 },
+      sink!,
+      {
+        chascuro_batch_id: 'batch-a',
+        chascuro_step: 'rebalance-receive',
+      },
+    );
+    expect(receive.operation.key.federationId).toBe('fed-a');
+    const preview = await service.lightning.parseInvoice(
+      sensitiveInput(receive.invoice.reveal()),
+    );
+    const quote = await service.lightning.quotePaymentForRoute(
+      { preview, maximumFeeMsats: msats(5_000n) },
+      source!,
+    );
+    const payment = await service.lightning.payForRoute(
+      confirmLightningQuote(quote, preview.fingerprint, 1_000),
+      source!,
+      {
+        chascuro_batch_id: 'batch-a',
+        chascuro_step: 'rebalance-send',
+      },
+    );
+
+    expect(payment.operation.key.federationId).toBe('fed-b');
+    expect(
+      service
+        .getSnapshot()
+        .connectedFederations.find(
+          (federation) => federation.federationId === 'fed-b',
+        )?.balanceMsats,
+    ).toBe(msats(19_000n));
+    receive.invoice.clear();
+  });
+
   it('reports deterministic recovery progress', async () => {
     const service = new FakeWalletService({ latencyMs: 0, clock: () => 9000 });
     await service.open();

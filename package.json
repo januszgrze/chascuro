@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "VITE_WALLET_MODE=fedimint vite --host 0.0.0.0",
+    "dev:consolidation-test": "VITE_WALLET_MODE=fedimint VITE_ENABLE_MAINNET_CONSOLIDATION_TEST=true vite --host 0.0.0.0",
     "dev:test-wallet": "VITE_WALLET_MODE=fedimint VITE_TEST_WALLET_BYPASS=true vite --host 0.0.0.0",
     "dev:fake": "VITE_WALLET_MODE=fake vite --host 0.0.0.0",
     "build:marmot-wasm": "runtime/marmot-web/scripts/build-wasm.sh",

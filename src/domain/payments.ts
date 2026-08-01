@@ -9,6 +9,7 @@ declare const secretRecordRefBrand: unique symbol;
 declare const confirmedEcashRedeemBrand: unique symbol;
 declare const confirmedEcashSpendBrand: unique symbol;
 declare const confirmedLightningQuoteBrand: unique symbol;
+declare const confirmedPortfolioLightningPlanBrand: unique symbol;
 
 export const DEFAULT_SENSITIVE_INPUT_LIMIT_BYTES = 64 * 1024;
 
@@ -127,6 +128,7 @@ export interface LightningQuote {
   readonly feeMsats: Msats;
   readonly maximumFeeMsats: Msats;
   readonly expiresAtMs: number;
+  readonly federationId?: FederationId;
   readonly gatewayId?: string;
 }
 
@@ -134,6 +136,35 @@ export interface ConfirmedLightningQuote {
   readonly quote: LightningQuote;
   readonly confirmedAtMs: number;
   readonly [confirmedLightningQuoteBrand]: 'ConfirmedLightningQuote';
+}
+
+export interface LightningPaymentRoute {
+  readonly federationId: FederationId;
+  readonly federationDisplayName: string;
+  readonly gatewayId: string;
+  readonly balanceMsats: Msats;
+  readonly feeMsats: Msats;
+  readonly vetted: boolean;
+}
+
+export interface PortfolioLightningPaymentPlan {
+  readonly planId: QuoteId;
+  readonly targetFingerprint: PaymentFingerprint;
+  readonly amountMsats: Msats;
+  readonly expiresAtMs: number;
+  readonly maximumTotalFeeMsats: Msats;
+  readonly estimatedTotalFeeMsats: Msats;
+  readonly transferAmountMsats: Msats;
+  readonly transferFeeMsats: Msats;
+  readonly finalPaymentFeeMsats: Msats;
+  readonly sinkRoute: LightningPaymentRoute;
+  readonly sourceRoute: LightningPaymentRoute;
+}
+
+export interface ConfirmedPortfolioLightningPaymentPlan {
+  readonly plan: PortfolioLightningPaymentPlan;
+  readonly confirmedAtMs: number;
+  readonly [confirmedPortfolioLightningPlanBrand]: 'ConfirmedPortfolioLightningPaymentPlan';
 }
 
 export interface TrackedOperation {
@@ -331,4 +362,32 @@ export function confirmLightningQuote(
     quote,
     confirmedAtMs,
   }) as ConfirmedLightningQuote;
+}
+
+export function confirmPortfolioLightningPaymentPlan(
+  plan: PortfolioLightningPaymentPlan,
+  invoiceFingerprint: PaymentFingerprint,
+  confirmedAtMs: number,
+): ConfirmedPortfolioLightningPaymentPlan {
+  assertTimestamp(confirmedAtMs);
+
+  if (
+    plan.targetFingerprint !== invoiceFingerprint ||
+    plan.amountMsats <= 0n ||
+    plan.transferAmountMsats <= 0n ||
+    plan.sinkRoute.federationId === plan.sourceRoute.federationId ||
+    plan.estimatedTotalFeeMsats !==
+      plan.transferFeeMsats + plan.finalPaymentFeeMsats ||
+    plan.estimatedTotalFeeMsats > plan.maximumTotalFeeMsats ||
+    confirmedAtMs >= plan.expiresAtMs
+  ) {
+    throw new RangeError(
+      'Combined Lightning payment plan is stale or no longer valid.',
+    );
+  }
+
+  return Object.freeze({
+    plan,
+    confirmedAtMs,
+  }) as ConfirmedPortfolioLightningPaymentPlan;
 }

@@ -239,6 +239,83 @@ describe('HomeScreen scanned wallet input', () => {
     );
   });
 
+  it('reviews a combined payment and makes a failed attempt single-use', async () => {
+    const user = userEvent.setup();
+    const preview = {
+      fingerprint: paymentFingerprint('portfolio-invoice'),
+      network: 'bitcoin' as const,
+      amountMsats: satsToMsats(100n),
+      expiresAtMs: Date.now() + 60 * 60_000,
+    };
+    const quote = {
+      quoteId: quoteId('portfolio-final-quote'),
+      invoiceFingerprint: preview.fingerprint,
+      amountMsats: preview.amountMsats,
+      feeMsats: satsToMsats(1n),
+      maximumFeeMsats: satsToMsats(10n),
+      expiresAtMs: Date.now() + 60_000,
+      federationId: federationId('fed-a'),
+      gatewayId: 'gateway-a',
+    };
+    const sinkRoute = {
+      federationId: federationId('fed-a'),
+      federationDisplayName: 'Federation A',
+      gatewayId: 'gateway-a',
+      balanceMsats: satsToMsats(70n),
+      feeMsats: satsToMsats(1n),
+      vetted: true,
+    };
+    const sourceRoute = {
+      federationId: federationId('fed-b'),
+      federationDisplayName: 'Federation B',
+      gatewayId: 'gateway-b',
+      balanceMsats: satsToMsats(40n),
+      feeMsats: satsToMsats(1n),
+      vetted: true,
+    };
+    const portfolioPlan = {
+      planId: quoteId('portfolio-plan'),
+      targetFingerprint: preview.fingerprint,
+      amountMsats: preview.amountMsats,
+      expiresAtMs: quote.expiresAtMs,
+      maximumTotalFeeMsats: satsToMsats(10n),
+      estimatedTotalFeeMsats: satsToMsats(2n),
+      transferAmountMsats: satsToMsats(31n),
+      transferFeeMsats: satsToMsats(1n),
+      finalPaymentFeeMsats: satsToMsats(1n),
+      sinkRoute,
+      sourceRoute,
+    };
+    const onPayLightningQuote = vi.fn().mockResolvedValue({
+      ok: false,
+      error: 'Combined payment stopped.',
+    });
+    renderHome({
+      onQuoteLightningPayment: vi.fn().mockResolvedValue({
+        ok: true,
+        value: { preview, quote, portfolioPlan },
+      }),
+      onPayLightningQuote,
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    scanner.payload = 'lnbc1portfolio';
+    await user.click(screen.getByRole('button', { name: 'Scan test QR' }));
+
+    expect(screen.getByText('Experimental combined payment')).toBeVisible();
+    expect(screen.getByText('Federation B → Federation A')).toBeVisible();
+    expect(screen.getByText('Funds moved internally')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: /Pay.*100/ }));
+
+    expect(onPayLightningQuote).toHaveBeenCalledWith(
+      preview,
+      quote,
+      portfolioPlan,
+    );
+    expect(screen.getByText('Do not retry this review.')).toBeVisible();
+    expect(screen.getByRole('button', { name: /Pay.*100/ })).toBeDisabled();
+  });
+
   it('resolves a Lightning Address, validates a chosen amount, and quotes before payment', async () => {
     const user = userEvent.setup();
     const offer = {

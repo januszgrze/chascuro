@@ -273,6 +273,35 @@ pattern is:
 3. submit all partial payments concurrently so the Lightning receiver releases
    the shared preimage only when the complete MPP arrives.
 
+### Coordinator ownership boundary
+
+The coordinator is local to the unlocked Chascuro wallet. There is no hosted
+coordinator, no federation-to-federation communication, and no new
+cross-federation consensus protocol.
+
+Chascuro owns:
+
+- decoding and validating the invoice amount, expiry, payment hash,
+  `payment_secret`, and `basic_mpp` feature;
+- reading client balances and versioned gateway capabilities;
+- selecting one to three federation-qualified shards;
+- allocating exact shard amounts and fee limits;
+- persisting the parent batch before any dispatch side effect;
+- dispatching eligible shards concurrently;
+- reconciling every shard after lock, reload, timeout, or ambiguous failure;
+  and
+- exposing one parent wallet operation to the existing UI.
+
+Chascuro does not construct Lightning HTLCs, make gateways coordinate with one
+another, or turn the payment into a perfectly atomic cross-federation
+transaction. Each selected gateway remains responsible for constructing and
+routing its own partial HTLC through its Lightning backend.
+
+For BOLT11 basic MPP, every shard must use the same payment hash,
+`payment_secret`, and `total_msat`; only the shard amount differs. The invoice
+must advertise `basic_mpp`. The batch ID and shard ID are Chascuro/Fedimint
+idempotency fields and are not Lightning wire-level MPP fields.
+
 The installed Fedimint SDK exposes only full-invoice payment. The current
 Fedimint gateway Lightning trait also pays a complete invoice and has no
 partial-amount argument. This phase therefore requires a separately testable
@@ -281,12 +310,101 @@ change through the whole stack:
 - web SDK and Wasm RPC;
 - Fedimint Lightning client;
 - funded outgoing contract calculation;
-- gateway request and capability advertisement; and
+- a versioned gateway request and capability endpoint; and
 - supported Lightning backends.
+
+### Feasibility result from the code-path audit
+
+This design is technically feasible, but not as a Chascuro-only change and not
+through unmodified public gateways.
+
+The important boundary is narrower than a new federation protocol:
+
+- the existing LNv1 `OutgoingContract` commits to a payment hash, gateway key,
+  timelock, user key, and cancellation flag;
+- its `OutgoingContractAccount` already carries an arbitrary funded amount;
+- guardians do not validate that this amount equals the BOLT11 invoice amount;
+  and
+- the same preimage can therefore redeem independently funded contracts in
+  different federations.
+
+The full-invoice restriction is imposed outside guardian consensus. The current
+Fedimint client derives the contract amount from the invoice amount plus the
+gateway fee. The current gateway independently derives the required amount and
+maximum routing fee from that same full invoice amount. Both checks must be
+extended to use a separately authenticated shard amount while preserving the
+invoice's full amount as `total_msat`.
+
+The gateway announcement already includes `node_pub_key`. The first
+implementation must reject a multi-shard plan that selects the same Lightning
+node for more than one independently dispatched shard. The current Fedimint
+LND and LDK adapters identify and reconcile an outbound payment by payment hash,
+not by Chascuro shard ID. LND's low-level route API can add multiple MPP
+attempts to one in-flight payment, but safely attributing and retrying those
+attempts would require a shared node-level coordinator. Different gateways
+backed by distinct Lightning nodes keep the initial shard idempotency boundary
+unambiguous.
+
+Do not add an MPP field to the federation-encoded `LightningGateway` record for
+the first implementation. Discover support from a versioned endpoint under the
+gateway's already announced API URL and bind its response to the announced
+`gateway_id` and `node_pub_key`. This avoids a guardian/schema upgrade and
+prevents an old gateway from accidentally receiving a partial request through
+the legacy full-payment endpoint.
+
+#### Lightning backend result
+
+For LND, the normal `SendPaymentV2` call is not sufficient: its amount is the
+complete payment that LND itself will try to deliver, even when LND internally
+uses multiple paths. An externally coordinated shard requires the lower-level
+route flow:
+
+1. find or build a route for the shard amount;
+2. set the final hop's MPP record to the invoice `payment_secret` and full
+   `total_msat`;
+3. submit that one route with `SendToRouteV2`; and
+4. wait for the HTLC attempt to settle or fail.
+
+This is a viable first backend. It needs explicit route retry, fee accounting,
+mission-control reporting, idempotency, and status reconciliation because the
+high-level LND payment loop no longer supplies those automatically.
+
+Fedimint's LDK backend currently calls the high-level
+`bolt11_payment().send(...)` path, which owns the complete payment. The
+underlying rust-lightning code constructs each onion with a separate
+`amt_to_forward` and `total_value`, so the protocol primitive exists, but the
+public wrapper does not expose “send this one path for `shard_msat` while
+advertising `total_msat`.” Supporting LDK therefore needs an additional
+rust-lightning/fedimint-ldk-node API and should follow, rather than block, the
+LND proof-of-concept.
+
+### Minimum proof-of-concept stack
+
+Build and test this as pinned forks before changing Chascuro's default payment
+path:
+
+1. fork the Fedimint client/Wasm and add prepare, dispatch, status, and refund
+   RPCs for an MPP shard;
+2. fund each outgoing contract with `shard_msat + gateway_fee(shard_msat)`,
+   while retaining the original invoice, payment hash, `payment_secret`, and
+   full `total_msat`;
+3. add a new versioned gateway capability and shard-payment endpoint, leaving
+   the legacy full-payment endpoint untouched;
+4. extend the gateway's LND adapter with the lower-level route/send flow above;
+5. run two gateway instances backed by two distinct LND nodes and registered
+   with two test federations; and
+6. have Chascuro coordinate two shards only after all capability, invoice,
+   balance, fee, expiry, and distinct-node checks pass.
+
+The initial feature must fail closed when any selected gateway lacks the new
+endpoint. Existing public gateways remain full-payment-only. A modified gateway
+can register with an otherwise unmodified federation, so the first end-to-end
+test should not require guardian changes.
 
 The protocol must carry:
 
 - the original invoice and payment hash;
+- the invoice's `payment_secret`, MPP feature, and expiry;
 - the shard amount in millisats;
 - the invoice total amount in millisats;
 - a stable batch ID and shard ID;
@@ -297,6 +415,13 @@ The protocol must carry:
 
 Do not assume all gateways support this. Partial MPP is eligible only when every
 selected client/gateway explicitly advertises and successfully quotes it.
+
+Quote/preparation must have precise semantics. A quote may reserve nothing and
+perform no payment side effect. A separate prepare step is optional, but if it
+funds a contract, reserves balance, or can initiate an HTLC, the coordinator
+must treat it as dispatch: persist the batch first and reconcile it as a
+non-idempotent external side effect. The application must not infer a safe
+two-phase commit from an API name.
 
 This phase belongs behind a regtest-only feature flag until refund, retry,
 expiry, and crash behavior are proven. No production fallback may reinterpret
@@ -326,8 +451,19 @@ Every plan must prove:
 - total maximum fees fit the user's existing fee limit; and
 - the output is deterministic for the same inputs.
 
-Do not add arbitrary payment-size thresholds for the number of federations.
-Liquidity, fees, capability, and the “fewest shards” rule are sufficient.
+Payment-size bands may cap the number of shards as wallet policy, but they do
+not force unnecessary splitting and are not protocol rules. An initial policy
+could be:
+
+- up to 500 sats: one federation;
+- 501–2,500 sats: at most two federations; and
+- above 2,500 sats: at most three federations.
+
+Within that cap, prefer a single federation that can fund the complete payment,
+then use the fewest shards needed. Liquidity, gateway minimums and maximums,
+fees, expiry, capability, and deterministic tie-breaking still decide whether
+a plan is valid. A payment that cannot be funded within the policy cap fails
+before dispatch.
 
 ## Phase 6: durable MPP batch coordinator
 
@@ -338,26 +474,45 @@ operations.
 ```ts
 interface LightningPaymentBatch {
   readonly batchId: string;
+  readonly protocolVersion: number;
   readonly invoiceFingerprint: PaymentFingerprint;
+  readonly paymentHash: string;
+  readonly secretRecordRef: SecretRecordRef;
   readonly amountMsats: Msats;
   readonly maximumFeeMsats: Msats;
+  readonly expiresAtMs: number;
   readonly state: LightningBatchState;
-  readonly shards: readonly LightningPaymentShard[];
+  readonly shards: readonly {
+    readonly shardId: string;
+    readonly federationId: FederationId;
+    readonly clientName: ClientName;
+    readonly gatewayId: string;
+    readonly amountMsats: Msats;
+    readonly maximumFeeMsats: Msats;
+    readonly quoteId?: string;
+    readonly quoteExpiresAtMs?: number;
+    readonly operationId?: OperationId;
+    readonly state: LightningShardState;
+  }[];
 }
 ```
 
 Suggested states:
 
 ```text
-draft -> quoted -> confirmed -> dispatching -> settling -> settled
-                                      |             |
-                                      v             v
-                                 reconciling -> refunding -> refunded/failed
+planning -> quoted -> confirmed -> dispatching -> settling -> settled
+                                        |             |
+                                        v             v
+                                   reconciling -> refunding
+                                        |          |
+                                        v          v
+                                   failed/expired  refunded
 ```
 
 After the existing UI confirmation:
 
-1. persist the confirmed batch and all shard IDs;
+1. persist the confirmed batch, protocol version, invoice secret reference, and
+   all shard IDs;
 2. submit all quoted partial payments concurrently;
 3. persist every returned federation operation ID;
 4. reconcile every ambiguous child before retrying;
@@ -377,10 +532,15 @@ Critical rules:
   and
 - retain enough encrypted state to resume after lock, reload, or crash.
 
+Shard state must distinguish at least planned, quoted, submitted, pending,
+settled, refunding, refunded, failed-before-dispatch, and unknown/ambiguous.
+The parent cannot report failure while any shard may still be live.
+
 The original plan's separate `preparePartialPayment` and
 `dispatchPartialPayment` stages are not assumed. Add such a two-phase protocol
-only if the Fedimint client and gateway explicitly implement it; NUT-15 itself
-does not require that API.
+only if the Fedimint client and gateway explicitly implement and document its
+reservation, expiry, idempotency, and cancellation semantics; Lightning MPP
+itself does not provide two-phase commit.
 
 ## Phase 7: MPP validation and release gates
 
@@ -388,17 +548,22 @@ Planner tests:
 
 - one federation can pay, so MPP is not used;
 - two and three federation splits;
+- shard-count policy caps at each amount boundary;
 - exact millisat summation;
 - insufficient aggregate funds;
 - per-gateway minimum shard amounts;
 - quote expiry;
 - total fee ceiling;
+- invoices without `basic_mpp` or a valid `payment_secret`;
 - unsupported gateway exclusion; and
 - deterministic planning.
 
 Coordinator/regtest tests:
 
 - two independent Lightning backends complete one MPP invoice;
+- every dispatched shard uses the same payment hash, `payment_secret`, and
+  `total_msat`;
+- quoting produces no contract, balance reservation, or HTLC side effect;
 - all children return the same preimage;
 - one shard fails before dispatch;
 - one shard becomes ambiguous during dispatch;

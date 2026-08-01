@@ -144,6 +144,7 @@ interface HarnessOptions {
   walletDataEraser?: (
     storage: VaultStore,
   ) => Promise<WalletDataEraseReport | void>;
+  portfolioPaymentTestEnabled?: boolean;
 }
 
 class RecordingChatLifecycle implements ChatSessionLifecycle {
@@ -234,6 +235,7 @@ function createController(options: HarnessOptions = {}): ControllerHarness {
     visibilitySource: options.visibilitySource ?? null,
     disposableTestWallet: options.disposableTestWallet,
     lnurlPayResolver: options.lnurlPayResolver,
+    portfolioPaymentTestEnabled: options.portfolioPaymentTestEnabled,
   });
   controllers.push(controller);
   return { controller, service, store, inactivityLock };
@@ -826,6 +828,145 @@ describe('WalletAppController feature safety', () => {
       harness.controller.claimChatPayment(incomingId),
     ).resolves.toMatchObject({ ok: false });
     expect(markClaimed).not.toHaveBeenCalled();
+  });
+
+  it('consolidates from the second federation before paying from the primary', async () => {
+    let nextId = 0;
+    const service = new FakeWalletService({
+      latencyMs: 0,
+      autoSettlePayments: true,
+      clock: () => 1_000,
+      idFactory: () => `portfolio-${++nextId}`,
+      initialFederationBalancesMsats: {
+        'fed-a': msats(70_000n),
+        'fed-b': msats(40_000n),
+      },
+      previewResolver: (inviteCode) => ({
+        federationId: federationId(inviteCode === INVITE ? 'fed-a' : 'fed-b'),
+        displayName: inviteCode === INVITE ? 'Federation A' : 'Federation B',
+        network: 'signet',
+        modules: Object.freeze(['ln', 'mint']),
+        guardianCount: 3,
+        guardianOrigins: Object.freeze([
+          `wss://${inviteCode === INVITE ? 'a' : 'b'}.example`,
+        ]),
+      }),
+    });
+    const harness = await createJoinedController({
+      service,
+      portfolioPaymentTestEnabled: true,
+    });
+    harness.controller.addAnotherFederation();
+    await harness.controller.previewFederation('second federation invite');
+    await harness.controller.joinFederation(true);
+    expect(
+      harness.controller.getState().walletSnapshot.connectedFederations,
+    ).toHaveLength(2);
+
+    const review = await harness.controller.quoteLightningPayment(
+      'lntb1fake100000x3601000xmerchant',
+      '10',
+    );
+    expect(review).toMatchObject({
+      ok: true,
+      value: {
+        portfolioPlan: {
+          amountMsats: 100_000n,
+          transferAmountMsats: 31_000n,
+          sinkRoute: { federationId: 'fed-a' },
+          sourceRoute: { federationId: 'fed-b' },
+        },
+      },
+    });
+    if (!review.ok || review.value.portfolioPlan === undefined) {
+      throw new Error('Expected a combined payment review.');
+    }
+
+    const payment = await harness.controller.payLightningQuote(
+      review.value.preview,
+      review.value.quote,
+      review.value.portfolioPlan,
+    );
+    expect(payment).toMatchObject({
+      ok: true,
+      value: {
+        operation: {
+          key: { federationId: 'fed-a' },
+          kind: 'lightning_send',
+        },
+      },
+    });
+    expect(
+      service
+        .getSnapshot()
+        .operations.some(
+          (operation) =>
+            operation.kind === 'lightning_send' &&
+            operation.key.federationId === 'fed-b',
+        ),
+    ).toBe(true);
+  });
+
+  it('does not report funds moved when consolidation submission fails', async () => {
+    let nextId = 0;
+    const service = new FakeWalletService({
+      latencyMs: 0,
+      autoSettlePayments: true,
+      clock: () => 1_000,
+      idFactory: () => `portfolio-failure-${++nextId}`,
+      initialFederationBalancesMsats: {
+        'fed-a': msats(70_000n),
+        'fed-b': msats(40_000n),
+      },
+      previewResolver: (inviteCode) => ({
+        federationId: federationId(inviteCode === INVITE ? 'fed-a' : 'fed-b'),
+        displayName: inviteCode === INVITE ? 'Federation A' : 'Federation B',
+        network: 'signet',
+        modules: Object.freeze(['ln', 'mint']),
+        guardianCount: 3,
+        guardianOrigins: Object.freeze([
+          `wss://${inviteCode === INVITE ? 'a' : 'b'}.example`,
+        ]),
+      }),
+    });
+    const harness = await createJoinedController({
+      service,
+      portfolioPaymentTestEnabled: true,
+    });
+    harness.controller.addAnotherFederation();
+    await harness.controller.previewFederation('second federation invite');
+    await harness.controller.joinFederation(true);
+
+    const review = await harness.controller.quoteLightningPayment(
+      'lntb1fake100000x3601000xmerchant',
+      '10',
+    );
+    if (!review.ok || review.value.portfolioPlan === undefined) {
+      throw new Error('Expected a combined payment review.');
+    }
+    vi.spyOn(service.lightning, 'payForRoute').mockRejectedValueOnce(
+      new WalletError('operation_failed'),
+    );
+
+    await expect(
+      harness.controller.payLightningQuote(
+        review.value.preview,
+        review.value.quote,
+        review.value.portfolioPlan,
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      error: 'The wallet operation failed.',
+    });
+    expect(
+      service
+        .getSnapshot()
+        .operations.some(
+          (operation) =>
+            operation.kind === 'lightning_send' &&
+            operation.key.federationId === 'fed-b',
+        ),
+    ).toBe(false);
   });
 
   it('resolves and quotes opaque LNURL-pay offers through the existing Lightning boundary', async () => {

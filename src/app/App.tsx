@@ -317,8 +317,8 @@ export function WalletApp(dependencies: WalletAppProps) {
           onQuoteLnurlPayment={(offerId, amountSats, maximumFeeSats) =>
             controller.quoteLnurlPayment(offerId, amountSats, maximumFeeSats)
           }
-          onPayLightningQuote={(preview, quote) =>
-            controller.payLightningQuote(preview, quote)
+          onPayLightningQuote={(preview, quote, portfolioPlan) =>
+            controller.payLightningQuote(preview, quote, portfolioPlan)
           }
           onReconcile={() => controller.reconcileOperations()}
           onRevealMnemonic={() => controller.revealMnemonic()}

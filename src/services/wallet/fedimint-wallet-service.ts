@@ -34,6 +34,7 @@ import {
   type FederationDescriptor,
   type FederationJoinApproval,
   type LightningInvoicePreview,
+  type LightningPaymentRoute,
   type LightningPaymentIntent,
   type LightningQuote,
   type LightningReceive,
@@ -54,6 +55,7 @@ import {
   asRecord,
   checkedMsatsToSdkNumber,
   checkedSdkMsats,
+  classifyLightningPaySubmissionError,
   describeBolt11ParseResponse,
   describeFederationNetworkDiagnostics,
   fingerprintSensitiveInput,
@@ -88,6 +90,7 @@ import {
 import { selectLightningReceiveFederationId } from './lightning-receive-router';
 
 export {
+  classifyLightningPaySubmissionError,
   normalizeInternalPayState,
   normalizeLnPayState,
   normalizeLnReceiveState,
@@ -128,6 +131,48 @@ class FedimintWebWalletDirector extends WalletDirector {
   }
 }
 
+function validateOperationMetadata(
+  metadata: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> {
+  const entries = Object.entries(metadata);
+  if (
+    entries.length > 4 ||
+    entries.some(
+      ([key, value]) =>
+        key.length === 0 ||
+        key.length > 64 ||
+        value.length === 0 ||
+        value.length > 128,
+    )
+  ) {
+    throw new WalletError('invalid_input');
+  }
+  return Object.freeze(Object.fromEntries(entries));
+}
+
+function gatewayDiagnosticHint(gatewayId: string): string {
+  return gatewayId.length <= 12 ? gatewayId : `${gatewayId.slice(0, 12)}…`;
+}
+
+function gatewayCacheTtlStatus(
+  gateway: unknown,
+): 'positive' | 'zero' | 'unknown' {
+  const ttl = asRecord(asRecord(gateway)?.ttl);
+  const seconds = ttl?.secs;
+  const nanos = ttl?.nanos;
+  if (
+    typeof seconds !== 'number' ||
+    !Number.isSafeInteger(seconds) ||
+    seconds < 0 ||
+    typeof nanos !== 'number' ||
+    !Number.isSafeInteger(nanos) ||
+    nanos < 0
+  ) {
+    return 'unknown';
+  }
+  return seconds > 0 || nanos > 0 ? 'positive' : 'zero';
+}
+
 interface PendingCandidate {
   candidate: FederationCandidate;
   inviteCode: string;
@@ -137,6 +182,8 @@ interface PendingLightningQuote {
   readonly quote: LightningQuote;
   readonly invoice: SensitiveInput;
   readonly gateway: GatewayInfo;
+  readonly gatewayCacheTtl: 'positive' | 'zero' | 'unknown';
+  readonly gatewayVetted: boolean;
   readonly federationId: ActiveFederation['federationId'];
 }
 
@@ -233,6 +280,31 @@ export class FedimintWalletService implements WalletService {
       quote: ConfirmedLightningQuote,
       signal?: AbortSignal,
     ): Promise<TrackedOperation> => this.payLightningInvoice(quote, signal),
+    inspectPaymentRoutes: (
+      amountMsats: Msats,
+      signal?: AbortSignal,
+    ): Promise<readonly LightningPaymentRoute[]> =>
+      this.inspectLightningPaymentRoutes(amountMsats, signal),
+    createInvoiceForRoute: (
+      intent: LightningReceiveIntent,
+      route: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
+      metadata: Readonly<Record<string, string>>,
+      signal?: AbortSignal,
+    ): Promise<LightningReceive> =>
+      this.createLightningInvoiceForRoute(intent, route, metadata, signal),
+    quotePaymentForRoute: (
+      intent: LightningPaymentIntent,
+      route: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
+      signal?: AbortSignal,
+    ): Promise<LightningQuote> =>
+      this.quoteLightningPaymentForRoute(intent, route, signal),
+    payForRoute: (
+      quote: ConfirmedLightningQuote,
+      route: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
+      metadata: Readonly<Record<string, string>>,
+      signal?: AbortSignal,
+    ): Promise<TrackedOperation> =>
+      this.payLightningInvoiceForRoute(quote, route, metadata, signal),
   };
 
   readonly operations = {
@@ -846,7 +918,51 @@ export class FedimintWalletService implements WalletService {
       generation,
     );
     signal?.throwIfAborted();
+    return this.createLightningInvoiceOnRoute(
+      intent,
+      route,
+      {},
+      signal,
+      generation,
+    );
+  }
 
+  private async createLightningInvoiceForRoute(
+    intent: LightningReceiveIntent,
+    routeRef: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
+    metadata: Readonly<Record<string, string>>,
+    signal?: AbortSignal,
+  ): Promise<LightningReceive> {
+    if (
+      intent.amountMsats === 0n ||
+      !Number.isSafeInteger(intent.expirySeconds) ||
+      intent.expirySeconds < 60
+    ) {
+      throw new WalletError('invalid_input');
+    }
+    const safeMetadata = validateOperationMetadata(metadata);
+    const generation = this.generation;
+    const route = await this.resolveLightningReceiveRoute(
+      routeRef,
+      signal,
+      generation,
+    );
+    return this.createLightningInvoiceOnRoute(
+      intent,
+      route,
+      safeMetadata,
+      signal,
+      generation,
+    );
+  }
+
+  private async createLightningInvoiceOnRoute(
+    intent: LightningReceiveIntent,
+    route: LightningReceiveRoute,
+    metadata: Readonly<Record<string, string>>,
+    signal: AbortSignal | undefined,
+    generation: number,
+  ): Promise<LightningReceive> {
     let response: { operation_id: string; invoice: string };
     try {
       response = await route.wallet.lightning.createInvoice(
@@ -854,7 +970,7 @@ export class FedimintWalletService implements WalletService {
         intent.description ?? '',
         intent.expirySeconds,
         route.gateway,
-        {},
+        { ...metadata },
       );
     } catch {
       signal?.throwIfAborted();
@@ -894,6 +1010,53 @@ export class FedimintWalletService implements WalletService {
       expiresAtMs,
       secretRecordRef: recordRef,
     });
+  }
+
+  private async resolveLightningReceiveRoute(
+    routeRef: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
+    signal?: AbortSignal,
+    generation = this.generation,
+  ): Promise<LightningReceiveRoute> {
+    const federation = this.federations.get(routeRef.federationId);
+    const wallet = this.wallets.get(routeRef.federationId);
+    if (
+      federation === undefined ||
+      wallet === undefined ||
+      !federation.modules.includes('ln')
+    ) {
+      throw new WalletError('gateway_unavailable');
+    }
+
+    try {
+      await wallet.lightning.updateGatewayCache();
+      signal?.throwIfAborted();
+      this.assertGeneration(generation);
+      const gateways = await wallet.lightning.listGateways();
+      const gatewayRegistration = gateways.find(
+        (candidate) => candidate?.info?.gateway_id === routeRef.gatewayId,
+      );
+      const gateway = gatewayRegistration?.info;
+      if (gateway === undefined) {
+        throw new WalletError('gateway_unavailable');
+      }
+      if (import.meta.env.DEV) {
+        console.info('Fedimint Lightning receive route diagnostics', {
+          event: 'receive_route_selected',
+          selectionMode: 'exact-route',
+          gatewayHint: gatewayDiagnosticHint(gateway.gateway_id),
+          gatewayVetted: gatewayRegistration?.vetted === true,
+          gatewayCacheTtl: gatewayCacheTtlStatus(gatewayRegistration),
+        });
+      }
+      return Object.freeze({ federation, wallet, gateway });
+    } catch (error) {
+      signal?.throwIfAborted();
+      this.assertGeneration(generation);
+      if (error instanceof WalletError) {
+        throw error;
+      }
+      throw new WalletError('gateway_unavailable');
+    }
   }
 
   private async selectLightningReceiveRoute(
@@ -962,6 +1125,15 @@ export class FedimintWalletService implements WalletService {
       }
       signal?.throwIfAborted();
       this.assertGeneration(generation);
+      if (import.meta.env.DEV) {
+        console.info('Fedimint Lightning receive route diagnostics', {
+          event: 'receive_route_selected',
+          selectionMode: 'balance-router',
+          gatewayHint: gatewayDiagnosticHint(gateway.gateway_id),
+          gatewayVetted: selectedGateway?.vetted === true,
+          gatewayCacheTtl: gatewayCacheTtlStatus(selectedGateway),
+        });
+      }
       return Object.freeze({
         federation: selected.federation,
         wallet: selected.wallet,
@@ -975,6 +1147,88 @@ export class FedimintWalletService implements WalletService {
       }
       throw new WalletError('gateway_unavailable');
     }
+  }
+
+  private async inspectLightningPaymentRoutes(
+    amountMsats: Msats,
+    signal?: AbortSignal,
+  ): Promise<readonly LightningPaymentRoute[]> {
+    if (amountMsats <= 0n) {
+      throw new WalletError('invalid_input');
+    }
+    this.requireActiveFederation();
+    const generation = this.generation;
+    const inspected = await Promise.all(
+      [...this.federations.values()].map(async (federation) => {
+        signal?.throwIfAborted();
+        if (!federation.modules.includes('ln')) {
+          return undefined;
+        }
+        const wallet = this.wallets.get(federation.federationId);
+        if (wallet === undefined) {
+          return undefined;
+        }
+        try {
+          const balanceMsats = await this.readBalance(wallet);
+          await wallet.lightning.updateGatewayCache();
+          signal?.throwIfAborted();
+          this.assertGeneration(generation);
+          const gateways = await wallet.lightning.listGateways();
+          return {
+            federation,
+            balanceMsats,
+            routes: gateways
+              .map((gateway) => {
+                const info = gateway?.info;
+                const feeMsats = quoteGatewayFee(info, amountMsats);
+                if (info === undefined || feeMsats === undefined) {
+                  return undefined;
+                }
+                return Object.freeze({
+                  federationId: federation.federationId,
+                  federationDisplayName: federation.displayName,
+                  gatewayId: info.gateway_id,
+                  balanceMsats,
+                  feeMsats,
+                  vetted: gateway.vetted === true,
+                });
+              })
+              .filter((route) => route !== undefined),
+          };
+        } catch {
+          return undefined;
+        }
+      }),
+    );
+    signal?.throwIfAborted();
+    this.assertGeneration(generation);
+
+    for (const entry of inspected) {
+      if (entry !== undefined) {
+        this.federationBalances.set(
+          entry.federation.federationId,
+          entry.balanceMsats,
+        );
+      }
+    }
+    this.setSnapshot({ balanceMsats: this.combinedBalance() });
+
+    const routes = inspected
+      .flatMap((entry) => entry?.routes ?? [])
+      .sort(
+        (left, right) =>
+          Number(right.vetted) - Number(left.vetted) ||
+          (left.feeMsats < right.feeMsats
+            ? -1
+            : left.feeMsats > right.feeMsats
+              ? 1
+              : left.federationId.localeCompare(right.federationId) ||
+                left.gatewayId.localeCompare(right.gatewayId)),
+      );
+    if (routes.length === 0) {
+      throw new WalletError('fee_quote_unavailable');
+    }
+    return Object.freeze(routes);
   }
 
   private async quoteLightningPayment(
@@ -1032,6 +1286,7 @@ export class FedimintWalletService implements WalletService {
                   feeMsats,
                   balance,
                   vetted: gateway.vetted === true,
+                  gatewayCacheTtl: gatewayCacheTtlStatus(gateway),
                 };
               })
               .filter((candidate) => candidate !== undefined);
@@ -1085,13 +1340,97 @@ export class FedimintWalletService implements WalletService {
       feeMsats: selected.feeMsats,
       maximumFeeMsats: intent.maximumFeeMsats,
       expiresAtMs: Math.min(intent.preview.expiresAtMs, Date.now() + 60_000),
+      federationId: selected.federation.federationId,
       gatewayId: selected.info.gateway_id,
     });
     this.lightningQuotes.set(quote.quoteId, {
       quote,
       invoice: parsed.invoice,
       gateway: selected.info,
+      gatewayCacheTtl: selected.gatewayCacheTtl,
+      gatewayVetted: selected.vetted,
       federationId: selected.federation.federationId,
+    });
+    return quote;
+  }
+
+  private async quoteLightningPaymentForRoute(
+    intent: LightningPaymentIntent,
+    routeRef: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
+    signal?: AbortSignal,
+  ): Promise<LightningQuote> {
+    const primaryFederation = this.requireActiveFederation();
+    const parsed = this.parsedLightningInvoices.get(intent.preview.fingerprint);
+    if (
+      parsed === undefined ||
+      parsed.preview.amountMsats === undefined ||
+      parsed.preview.amountMsats !== intent.preview.amountMsats ||
+      parsed.preview.expiresAtMs <= Date.now() ||
+      !isInvoiceNetworkCompatible(
+        intent.preview.network,
+        primaryFederation.network,
+      )
+    ) {
+      throw new WalletError('invalid_input');
+    }
+    if (intent.maximumFeeMsats < 0n) {
+      throw new WalletError('invalid_input');
+    }
+
+    const route = (
+      await this.inspectLightningPaymentRoutes(
+        intent.preview.amountMsats,
+        signal,
+      )
+    ).find(
+      (candidate) =>
+        candidate.federationId === routeRef.federationId &&
+        candidate.gatewayId === routeRef.gatewayId,
+    );
+    if (route === undefined) {
+      throw new WalletError('gateway_unavailable');
+    }
+    if (route.feeMsats > intent.maximumFeeMsats) {
+      throw new WalletError('fee_limit_exceeded');
+    }
+
+    const wallet = this.wallets.get(route.federationId);
+    if (wallet === undefined) {
+      throw new WalletError('federation_unavailable');
+    }
+    await wallet.lightning.updateGatewayCache();
+    const gatewayRegistration = (await wallet.lightning.listGateways()).find(
+      (candidate) => candidate?.info?.gateway_id === route.gatewayId,
+    );
+    const gateway = gatewayRegistration?.info;
+    if (gateway === undefined) {
+      throw new WalletError('gateway_unavailable');
+    }
+    const freshFeeMsats = quoteGatewayFee(gateway, intent.preview.amountMsats);
+    if (freshFeeMsats === undefined) {
+      throw new WalletError('fee_quote_unavailable');
+    }
+    if (freshFeeMsats > intent.maximumFeeMsats) {
+      throw new WalletError('fee_limit_exceeded');
+    }
+
+    const quote: LightningQuote = Object.freeze({
+      quoteId: quoteId(`fedimint-ln-${crypto.randomUUID()}`),
+      invoiceFingerprint: intent.preview.fingerprint,
+      amountMsats: intent.preview.amountMsats,
+      feeMsats: freshFeeMsats,
+      maximumFeeMsats: intent.maximumFeeMsats,
+      expiresAtMs: Math.min(intent.preview.expiresAtMs, Date.now() + 60_000),
+      federationId: route.federationId,
+      gatewayId: route.gatewayId,
+    });
+    this.lightningQuotes.set(quote.quoteId, {
+      quote,
+      invoice: parsed.invoice,
+      gateway,
+      gatewayCacheTtl: gatewayCacheTtlStatus(gatewayRegistration),
+      gatewayVetted: gatewayRegistration?.vetted === true,
+      federationId: route.federationId,
     });
     return quote;
   }
@@ -1099,6 +1438,8 @@ export class FedimintWalletService implements WalletService {
   private async payLightningInvoice(
     confirmed: ConfirmedLightningQuote,
     signal?: AbortSignal,
+    expectedRoute?: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
+    metadata: Readonly<Record<string, string>> = {},
   ): Promise<TrackedOperation> {
     const duplicate = this.submittedLightningQuotes.get(
       confirmed.quote.quoteId,
@@ -1111,7 +1452,10 @@ export class FedimintWalletService implements WalletService {
       pending === undefined ||
       pending.quote.invoiceFingerprint !== confirmed.quote.invoiceFingerprint ||
       pending.quote.expiresAtMs <= Date.now() ||
-      pending.quote.feeMsats > confirmed.quote.maximumFeeMsats
+      pending.quote.feeMsats > confirmed.quote.maximumFeeMsats ||
+      (expectedRoute !== undefined &&
+        (pending.federationId !== expectedRoute.federationId ||
+          pending.gateway.gateway_id !== expectedRoute.gatewayId))
     ) {
       throw new WalletError('fee_quote_unavailable');
     }
@@ -1127,9 +1471,24 @@ export class FedimintWalletService implements WalletService {
       response = await wallet.lightning.payInvoice(
         pending.invoice,
         pending.gateway,
-        {},
+        { ...metadata },
       );
-    } catch {
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.info('Fedimint Lightning payment diagnostics', {
+          event: 'pay_invoice_rejected',
+          paymentStep:
+            metadata.chascuro_step === 'rebalance-send'
+              ? 'rebalance-send'
+              : metadata.chascuro_step === 'merchant-send'
+                ? 'merchant-send'
+                : 'standard',
+          gatewayHint: gatewayDiagnosticHint(pending.gateway.gateway_id),
+          gatewayVetted: pending.gatewayVetted,
+          gatewayCacheTtl: pending.gatewayCacheTtl,
+          errorCategory: classifyLightningPaySubmissionError(error),
+        });
+      }
       throw new WalletError('operation_failed');
     }
     this.assertGeneration(generation);
@@ -1168,6 +1527,16 @@ export class FedimintWalletService implements WalletService {
       throw new WalletError('fee_limit_exceeded');
     }
     return tracked;
+  }
+
+  private payLightningInvoiceForRoute(
+    confirmed: ConfirmedLightningQuote,
+    route: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
+    metadata: Readonly<Record<string, string>>,
+    signal?: AbortSignal,
+  ): Promise<TrackedOperation> {
+    const safeMetadata = validateOperationMetadata(metadata);
+    return this.payLightningInvoice(confirmed, signal, route, safeMetadata);
   }
 
   async previewFederation(

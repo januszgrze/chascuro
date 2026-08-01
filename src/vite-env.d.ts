@@ -5,6 +5,7 @@ interface ImportMetaEnv {
   readonly VITE_MARMOT_RUNTIME_PROBE?: 'true' | 'false';
   readonly VITE_WALLET_MODE?: 'fake' | 'fedimint';
   readonly VITE_TEST_WALLET_BYPASS?: 'true' | 'false';
+  readonly VITE_ENABLE_MAINNET_CONSOLIDATION_TEST?: 'true' | 'false';
   readonly VITE_CHAT_MODE?: 'off' | 'fake' | 'mdk';
   readonly VITE_MARMOT_RELAYS?: string;
   readonly VITE_MARMOT_ALLOW_INSECURE_LOCALHOST?: 'true' | 'false';

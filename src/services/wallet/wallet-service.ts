@@ -13,6 +13,7 @@ import {
   type FederationDescriptor,
   type FederationJoinApproval,
   type LightningInvoicePreview,
+  type LightningPaymentRoute,
   type LightningPaymentIntent,
   type LightningQuote,
   type LightningReceive,
@@ -142,6 +143,27 @@ export interface WalletLightningService {
   ): Promise<LightningQuote>;
   pay(
     confirmedQuote: ConfirmedLightningQuote,
+    signal?: AbortSignal,
+  ): Promise<TrackedOperation>;
+  inspectPaymentRoutes(
+    amountMsats: Msats,
+    signal?: AbortSignal,
+  ): Promise<readonly LightningPaymentRoute[]>;
+  createInvoiceForRoute(
+    intent: LightningReceiveIntent,
+    route: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
+    metadata: Readonly<Record<string, string>>,
+    signal?: AbortSignal,
+  ): Promise<LightningReceive>;
+  quotePaymentForRoute(
+    intent: LightningPaymentIntent,
+    route: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
+    signal?: AbortSignal,
+  ): Promise<LightningQuote>;
+  payForRoute(
+    confirmedQuote: ConfirmedLightningQuote,
+    route: Pick<LightningPaymentRoute, 'federationId' | 'gatewayId'>,
+    metadata: Readonly<Record<string, string>>,
     signal?: AbortSignal,
   ): Promise<TrackedOperation>;
 }

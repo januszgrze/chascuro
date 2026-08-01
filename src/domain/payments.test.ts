@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
+import { federationId } from './federation';
 import { msats } from './money';
 import {
   clearableSecretText,
   confirmEcashSpend,
   confirmLightningQuote,
+  confirmPortfolioLightningPaymentPlan,
   normalizeMnemonicWords,
   paymentFingerprint,
   quoteId,
@@ -82,6 +84,42 @@ describe('payment domain', () => {
           amountMsats: msats(0n),
           includeFederationInvite: true,
         },
+        1_000,
+      ),
+    ).toThrow(RangeError);
+  });
+
+  it('binds a combined payment confirmation to its invoice and aggregate fee', () => {
+    const fingerprint = paymentFingerprint('portfolio-target');
+    const route = (id: string) => ({
+      federationId: federationId(id),
+      federationDisplayName: id,
+      gatewayId: `gateway-${id}`,
+      balanceMsats: msats(20_000n),
+      feeMsats: msats(1_000n),
+      vetted: true,
+    });
+    const plan = {
+      planId: quoteId('portfolio-plan'),
+      targetFingerprint: fingerprint,
+      amountMsats: msats(100_000n),
+      expiresAtMs: 2_000,
+      maximumTotalFeeMsats: msats(3_000n),
+      estimatedTotalFeeMsats: msats(2_000n),
+      transferAmountMsats: msats(31_000n),
+      transferFeeMsats: msats(1_000n),
+      finalPaymentFeeMsats: msats(1_000n),
+      sinkRoute: route('fed-a'),
+      sourceRoute: route('fed-b'),
+    };
+
+    expect(
+      confirmPortfolioLightningPaymentPlan(plan, fingerprint, 1_000).plan,
+    ).toBe(plan);
+    expect(() =>
+      confirmPortfolioLightningPaymentPlan(
+        { ...plan, estimatedTotalFeeMsats: msats(4_000n) },
+        fingerprint,
         1_000,
       ),
     ).toThrow(RangeError);

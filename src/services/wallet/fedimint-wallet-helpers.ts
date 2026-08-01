@@ -337,6 +337,118 @@ interface GatewayFeePolicy {
   readonly partsPerMillion: bigint;
 }
 
+export type LightningPaySubmissionErrorCategory =
+  | 'amount'
+  | 'contract'
+  | 'duplicate'
+  | 'fee'
+  | 'gateway'
+  | 'gateway_identity_mismatch'
+  | 'gateway_internal'
+  | 'gateway_unavailable'
+  | 'gateway_unreachable'
+  | 'insufficient_balance'
+  | 'invoice'
+  | 'network'
+  | 'payment_in_progress'
+  | 'routing'
+  | 'contract_not_created'
+  | 'unknown';
+
+export function classifyLightningPaySubmissionError(
+  error: unknown,
+): LightningPaySubmissionErrorCategory {
+  const message =
+    typeof error === 'string'
+      ? error
+      : error instanceof Error
+        ? error.message
+        : '';
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes('insufficient') ||
+    normalized.includes('not enough') ||
+    normalized.includes('balance')
+  ) {
+    return 'insufficient_balance';
+  }
+  if (normalized.includes('already paid') || normalized.includes('duplicate')) {
+    return 'duplicate';
+  }
+  if (normalized.includes('previous payment attempt')) {
+    return 'payment_in_progress';
+  }
+  if (normalized.includes('outgoingcontract was not created')) {
+    return 'contract_not_created';
+  }
+  if (normalized.includes('unexpected gateway id')) {
+    return 'gateway_identity_mismatch';
+  }
+  if (
+    normalized.includes('gateway is not available') ||
+    normalized.includes('no ln gateway available') ||
+    normalized.includes('no gateways exist')
+  ) {
+    return 'gateway_unavailable';
+  }
+  if (
+    normalized.includes('could not contact gateway') ||
+    normalized.includes('failed to contact gateway')
+  ) {
+    return 'gateway_unreachable';
+  }
+  if (
+    normalized.includes('gateway internal error') ||
+    normalized.includes('gatewayinternalerror')
+  ) {
+    return 'gateway_internal';
+  }
+  if (
+    normalized.includes('route') ||
+    normalized.includes('routing') ||
+    normalized.includes('no path') ||
+    normalized.includes('channel') ||
+    normalized.includes('peer')
+  ) {
+    return 'routing';
+  }
+  if (
+    normalized.includes('minimum') ||
+    normalized.includes('too small') ||
+    normalized.includes('htlc') ||
+    normalized.includes('amount')
+  ) {
+    return 'amount';
+  }
+  if (
+    normalized.includes('invoice') ||
+    normalized.includes('bolt11') ||
+    normalized.includes('payment hash') ||
+    normalized.includes('expired')
+  ) {
+    return 'invoice';
+  }
+  if (normalized.includes('gateway')) {
+    return 'gateway';
+  }
+  if (normalized.includes('contract')) {
+    return 'contract';
+  }
+  if (normalized.includes('fee')) {
+    return 'fee';
+  }
+  if (
+    normalized.includes('network') ||
+    normalized.includes('offline') ||
+    normalized.includes('timeout') ||
+    normalized.includes('connect') ||
+    normalized.includes('fetch')
+  ) {
+    return 'network';
+  }
+  return 'unknown';
+}
+
 export function parseGatewayFeePolicy(
   value: unknown,
 ): GatewayFeePolicy | undefined {
