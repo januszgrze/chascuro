@@ -14,5 +14,5 @@ The current security design and known limitations are documented in the
 Please do not disclose a suspected vulnerability, exploit, private key, wallet
 secret, or personal information in a public issue.
 
-To report a vulnerability, please email me at januszgrze789@gmail.com Include affected versions or commits, reproduction conditions, impact, and a minimal proof of concept where it is safe to do so. Never include real wallet
+To report a vulnerability, please email me at januszgrze789@gmail.com. Include affected versions or commits, reproduction conditions, impact, and a minimal proof of concept where it is safe to do so. Never include real wallet
 secrets or funds in a report.
