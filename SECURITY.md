@@ -14,11 +14,5 @@ The current security design and known limitations are documented in the
 Please do not disclose a suspected vulnerability, exploit, private key, wallet
 secret, or personal information in a public issue.
 
-Use the repository's private vulnerability-reporting flow under **Security →
-Advisories → Report a vulnerability**. If private reporting is unavailable,
-open a public issue containing no sensitive technical details and request a
-private contact channel.
-
-Include affected versions or commits, reproduction conditions, impact, and a
-minimal proof of concept where it is safe to do so. Never include real wallet
+To report a vulnerability, please email me at januszgrze789@gmail.com Include affected versions or commits, reproduction conditions, impact, and a minimal proof of concept where it is safe to do so. Never include real wallet
 secrets or funds in a report.
