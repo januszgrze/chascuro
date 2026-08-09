@@ -12,7 +12,21 @@ function deploymentHeadersFile(
     .join('\n')}\n`;
 }
 
+function deploymentBasePath(): string {
+  const base = process.env.VITE_BASE_PATH ?? '/';
+  if (!base.startsWith('/') || !base.endsWith('/')) {
+    throw new Error('VITE_BASE_PATH must start and end with "/".');
+  }
+  return base;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export default defineConfig(({ mode }) => {
+  const base = deploymentBasePath();
+  const escapedBase = escapeRegExp(base);
   const productionSecurityHeaders = createSecurityHeaders();
   const securityHeaders =
     mode === 'e2e'
@@ -60,31 +74,31 @@ export default defineConfig(({ mode }) => {
           'icons/apple-touch-icon.png',
         ],
         manifest: {
-          id: '/',
+          id: base,
           name: 'Chascuro',
           short_name: 'Chascuro',
           description: 'A Fedimint wallet with experimental Marmot chat.',
-          start_url: '/',
-          scope: '/',
+          start_url: base,
+          scope: base,
           display: 'standalone',
           background_color: '#ffffff',
           theme_color: '#000000',
           orientation: 'portrait-primary',
           icons: [
             {
-              src: '/icons/wallet-192.png',
+              src: `${base}icons/wallet-192.png`,
               sizes: '192x192',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: '/icons/wallet-512.png',
+              src: `${base}icons/wallet-512.png`,
               sizes: '512x512',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: '/icons/wallet-maskable-512.png',
+              src: `${base}icons/wallet-maskable-512.png`,
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',
@@ -95,8 +109,11 @@ export default defineConfig(({ mode }) => {
           cleanupOutdatedCaches: true,
           globPatterns: ['**/*.{css,html,js,json,svg,wasm}'],
           maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,
-          navigateFallback: '/index.html',
-          navigateFallbackDenylist: [/^\/api(?:\/|$)/, /^\/health(?:\/|$)/],
+          navigateFallback: `${base}index.html`,
+          navigateFallbackDenylist: [
+            new RegExp(`^${escapedBase}api(?:/|$)`),
+            new RegExp(`^${escapedBase}health(?:/|$)`),
+          ],
           runtimeCaching: [],
           sourcemap: false,
         },
@@ -105,6 +122,7 @@ export default defineConfig(({ mode }) => {
         },
       }),
     ],
+    base,
     build: {
       sourcemap: false,
     },

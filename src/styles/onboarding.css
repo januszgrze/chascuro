@@ -128,6 +128,13 @@
   margin-bottom: 32px;
 }
 
+.onb-software-disclaimer {
+  width: 100%;
+  max-width: 310px;
+  margin: 0;
+  text-align: left;
+}
+
 .onb-ready {
   overflow: hidden;
   background: var(--color-canvas);
