@@ -1667,6 +1667,26 @@ p {
   color: var(--color-positive);
 }
 
+.tx-detail-shell {
+  --color-canvas: #121316;
+  --color-surface: #1c1d22;
+  --color-ink: #f3efe4;
+  --color-muted: #8b8a97;
+  --color-line: #2a2c33;
+  --color-primary: #f3efe4;
+  --color-on-primary: #0b0814;
+  --color-accent: #f3efe4;
+  --color-accent-ink: #f3efe4;
+  --color-accent-wash: #24252b;
+  --color-positive: #34c77b;
+  --color-warn-wash: #3a2f2a;
+  --color-warn-ink: #e6b8a6;
+  --color-warn-stroke: #e5674a;
+
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
 .tx-detail-hero {
   display: flex;
   flex-direction: column;

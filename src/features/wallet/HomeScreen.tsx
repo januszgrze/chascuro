@@ -1654,7 +1654,10 @@ function TransactionDetailScreen({
   }
 
   return (
-    <section className="page-shell" aria-labelledby="tx-detail-title">
+    <section
+      className="page-shell tx-detail-shell"
+      aria-labelledby="tx-detail-title"
+    >
       <div className="page-topbar">
         <button
           className="page-close"
