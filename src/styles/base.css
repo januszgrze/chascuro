@@ -255,6 +255,10 @@ textarea {
   animation: screen-in 150ms ease-out both;
 }
 
+.screen > :is(.home-shell, .sr-shell, .qr-share, .confirm-shell, .page-shell) {
+  animation: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .screen > section {
     animation: none;
@@ -273,7 +277,15 @@ textarea {
   }
 }
 
-/* Wallet screen transitions (View Transitions API) */
+/* Screen transitions (View Transitions API) */
+
+.screen--onboarding > section {
+  view-transition-name: onboarding-screen;
+}
+
+.screen--onboarding .onb-progress {
+  view-transition-name: onboarding-progress;
+}
 
 .home-shell,
 .sr-shell,
@@ -284,29 +296,68 @@ textarea {
 }
 
 .home-nav,
-.sr-nav {
+.sr-nav,
+.wallet-dock {
   view-transition-name: wallet-nav;
 }
 
-.home-nav-balance,
-.sr-nav-balance {
+.wallet-nav-brand {
   view-transition-name: wallet-brand;
 }
 
 ::view-transition-group(wallet-nav),
-::view-transition-group(wallet-brand) {
-  animation-duration: 260ms;
-  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+::view-transition-group(wallet-brand),
+::view-transition-group(wallet-nav-active),
+::view-transition-group(wallet-rail-active) {
+  animation-duration: 300ms;
+  animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-::view-transition-old(wallet-screen),
+::view-transition-old(wallet-screen) {
+  animation-duration: 240ms;
+  animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
 ::view-transition-new(wallet-screen) {
+  animation-duration: 300ms;
+  animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+::view-transition-old(onboarding-screen),
+::view-transition-new(onboarding-screen) {
   animation-duration: 240ms;
   animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
+::view-transition-group(onboarding-progress) {
+  animation-duration: 240ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+::view-transition-old(onboarding-progress),
+::view-transition-new(onboarding-progress) {
+  animation-duration: 160ms;
+  animation-timing-function: ease-out;
+}
+
 :root[data-vt-dir='forward']::view-transition-old(wallet-screen) {
   animation-name: wallet-slide-out-left;
+}
+
+:root[data-vt-dir='forward']::view-transition-old(onboarding-screen) {
+  animation-name: wallet-slide-out-left;
+}
+
+:root[data-vt-dir='forward']::view-transition-new(onboarding-screen) {
+  animation-name: wallet-slide-in-right;
+}
+
+:root[data-vt-dir='back']::view-transition-old(onboarding-screen) {
+  animation-name: wallet-slide-out-right;
+}
+
+:root[data-vt-dir='back']::view-transition-new(onboarding-screen) {
+  animation-name: wallet-slide-in-left;
 }
 
 :root[data-vt-dir='forward']::view-transition-new(wallet-screen) {
@@ -321,10 +372,20 @@ textarea {
   animation-name: wallet-slide-in-left;
 }
 
+:root[data-vt-dir='lateral']::view-transition-old(wallet-screen) {
+  animation-duration: 140ms;
+  animation-name: wallet-fade-out;
+}
+
+:root[data-vt-dir='lateral']::view-transition-new(wallet-screen) {
+  animation-duration: 180ms;
+  animation-name: wallet-fade-in;
+}
+
 @keyframes wallet-slide-in-right {
   from {
     opacity: 0;
-    transform: translateX(28px);
+    transform: translateX(20%);
   }
 
   to {
@@ -341,14 +402,14 @@ textarea {
 
   to {
     opacity: 0;
-    transform: translateX(-28px);
+    transform: translateX(-20%);
   }
 }
 
 @keyframes wallet-slide-in-left {
   from {
     opacity: 0;
-    transform: translateX(-28px);
+    transform: translateX(-20%);
   }
 
   to {
@@ -365,7 +426,27 @@ textarea {
 
   to {
     opacity: 0;
-    transform: translateX(28px);
+    transform: translateX(20%);
+  }
+}
+
+@keyframes wallet-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes wallet-fade-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
   }
 }
 

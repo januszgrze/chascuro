@@ -6,6 +6,7 @@ import { BitcoinMark } from '../shared/BitcoinMark';
 import { CopyIcon, RefreshIcon, WarningTriangleIcon } from '../shared/icons';
 import { OnboardingProgress } from '../shared/OnboardingProgress';
 import { ScreenError } from '../shared/ScreenFrame';
+import { runViewTransition } from '../shared/screen-transition';
 
 interface IdentitySetupScreenProps {
   busy: boolean;
@@ -69,9 +70,11 @@ export function IdentitySetupScreen({
   async function createWalletIdentity() {
     try {
       const created = await onCreate();
-      setMnemonic(created);
-      setCopied(false);
-      setMode('create');
+      runViewTransition('forward', () => {
+        setMnemonic(created);
+        setCopied(false);
+        setMode('create');
+      });
     } catch {
       // The controller owns the sanitized public error state.
     }
@@ -310,7 +313,9 @@ export function IdentitySetupScreen({
         className="onb-restore-action"
         type="button"
         disabled={busy}
-        onClick={() => setMode('restore')}
+        onClick={() =>
+          runViewTransition('forward', () => setMode('restore'))
+        }
       >
         <RefreshIcon size={16} />
         Restore another wallet

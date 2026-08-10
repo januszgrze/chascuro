@@ -52,7 +52,9 @@ export function WalletDock({
         aria-label="Wallet home"
         onClick={onHome}
       >
-        <BitcoinMark />
+        <span className="wallet-nav-brand">
+          <BitcoinMark />
+        </span>
       </button>
       <button
         className={`wallet-dock-btn${active === 'send' ? ' is-active' : ''}`}
@@ -61,7 +63,12 @@ export function WalletDock({
         aria-label="Send"
         onClick={() => onNavigate('lightning', 'send')}
       >
-        <ArrowUpIcon />
+        {active === 'send' && (
+          <span className="wallet-nav-indicator" aria-hidden="true" />
+        )}
+        <span className="wallet-nav-icon">
+          <ArrowUpIcon />
+        </span>
       </button>
       <button
         className={`wallet-dock-btn${active === 'receive' ? ' is-active' : ''}`}
@@ -70,7 +77,12 @@ export function WalletDock({
         aria-label="Receive"
         onClick={() => onNavigate('ecash', 'receive')}
       >
-        <ArrowDownIcon />
+        {active === 'receive' && (
+          <span className="wallet-nav-indicator" aria-hidden="true" />
+        )}
+        <span className="wallet-nav-icon">
+          <ArrowDownIcon />
+        </span>
       </button>
     </nav>
   );

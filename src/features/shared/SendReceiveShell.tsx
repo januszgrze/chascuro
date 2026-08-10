@@ -46,7 +46,12 @@ export function SendReceiveShell({
             aria-label="Lightning"
             onClick={() => onNavigate('lightning', direction)}
           >
-            <BoltIcon />
+            {rail === 'lightning' && (
+              <span className="sr-toggle-indicator" aria-hidden="true" />
+            )}
+            <span className="sr-toggle-icon">
+              <BoltIcon />
+            </span>
           </button>
           <button
             className={`sr-toggle-btn${rail === 'ecash' ? ' is-active' : ''}`}
@@ -55,7 +60,12 @@ export function SendReceiveShell({
             aria-label="Ecash"
             onClick={() => onNavigate('ecash', direction)}
           >
-            <LinkIcon />
+            {rail === 'ecash' && (
+              <span className="sr-toggle-indicator" aria-hidden="true" />
+            )}
+            <span className="sr-toggle-icon">
+              <LinkIcon />
+            </span>
           </button>
         </div>
         {onKeyboard !== undefined && (
@@ -77,7 +87,9 @@ export function SendReceiveShell({
           aria-label="Wallet home"
           onClick={onHome}
         >
-          <BitcoinMark />
+          <span className="wallet-nav-brand">
+            <BitcoinMark />
+          </span>
         </button>
         <button
           className={`sr-nav-btn${direction === 'send' ? ' is-active' : ''}`}
@@ -86,7 +98,12 @@ export function SendReceiveShell({
           aria-label="Send"
           onClick={() => onNavigate('lightning', 'send')}
         >
-          <ArrowUpIcon />
+          {direction === 'send' && (
+            <span className="wallet-nav-indicator" aria-hidden="true" />
+          )}
+          <span className="wallet-nav-icon">
+            <ArrowUpIcon />
+          </span>
         </button>
         <button
           className={`sr-nav-btn${direction === 'receive' ? ' is-active' : ''}`}
@@ -95,7 +112,12 @@ export function SendReceiveShell({
           aria-label="Receive"
           onClick={() => onNavigate('ecash', 'receive')}
         >
-          <ArrowDownIcon />
+          {direction === 'receive' && (
+            <span className="wallet-nav-indicator" aria-hidden="true" />
+          )}
+          <span className="wallet-nav-icon">
+            <ArrowDownIcon />
+          </span>
         </button>
       </nav>
     </section>

@@ -27,6 +27,40 @@
   line-height: 72px;
 }
 
+.amount-value-tick {
+  display: inline-block;
+  transform-origin: center 65%;
+  animation: amount-value-tick 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes amount-value-tick {
+  from {
+    opacity: 0.78;
+    transform: translateY(2px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.amount-keypad .keypad-key,
+.pinpad .keypad-key {
+  border-radius: var(--radius-full);
+  transition:
+    background-color 120ms ease-out,
+    transform 90ms ease-out;
+}
+
+.amount-keypad .keypad-key:not(:disabled):active,
+.pinpad .keypad-key:not(:disabled):active,
+.amount-keypad .keypad-key.is-pressed:not(:disabled),
+.pinpad .keypad-key.is-pressed:not(:disabled) {
+  background: var(--color-accent-wash);
+  transform: scale(0.94);
+}
+
 .sr-shell {
   display: flex;
   flex: 1;
@@ -101,6 +135,7 @@
 }
 
 .sr-toggle-btn {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -116,7 +151,6 @@
 }
 
 .sr-shell--light .sr-toggle-btn.is-active {
-  background: var(--color-primary);
   color: var(--color-on-primary);
 }
 
@@ -125,8 +159,31 @@
 }
 
 .sr-shell--dark .sr-toggle-btn.is-active {
-  border: 1.5px solid var(--color-accent);
   color: var(--color-accent);
+}
+
+.sr-toggle-indicator {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: var(--radius-full);
+  view-transition-name: wallet-rail-active;
+}
+
+.sr-shell--light .sr-toggle-indicator {
+  background: var(--color-primary);
+}
+
+.sr-shell--dark .sr-toggle-indicator {
+  border: 1.5px solid var(--color-accent);
+}
+
+.sr-toggle-icon {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .sr-body {
@@ -157,6 +214,7 @@
 }
 
 .sr-nav-btn {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -168,8 +226,25 @@
 }
 
 .sr-nav-btn.is-active {
-  background: var(--color-primary);
   color: var(--color-on-primary);
+}
+
+.wallet-nav-indicator {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+  view-transition-name: wallet-nav-active;
+}
+
+.wallet-nav-brand,
+.wallet-nav-icon {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .sr-nav-balance {
@@ -208,12 +283,34 @@
   font-size: var(--text-body);
   font-weight: var(--font-weight-bold);
   line-height: 18px;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease;
 }
 
 .cta-send:disabled {
   background: var(--color-surface);
   color: var(--color-muted);
   opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .amount-value-tick {
+    animation: none;
+  }
+
+  .amount-keypad .keypad-key,
+  .pinpad .keypad-key,
+  .cta-send {
+    transition: none;
+  }
+
+  .amount-keypad .keypad-key:not(:disabled):active,
+  .pinpad .keypad-key:not(:disabled):active,
+  .amount-keypad .keypad-key.is-pressed:not(:disabled),
+  .pinpad .keypad-key.is-pressed:not(:disabled) {
+    transform: none;
+  }
 }
 
 /* Dark scanner */
@@ -639,6 +736,7 @@
 }
 
 .home-nav-btn {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -651,7 +749,6 @@
 }
 
 .home-nav-btn.is-active {
-  background: var(--color-primary);
   color: var(--color-on-primary);
 }
 
@@ -1400,6 +1497,7 @@ p {
 }
 
 .wallet-dock-btn {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1412,7 +1510,6 @@ p {
 }
 
 .wallet-dock-btn.is-active {
-  background: var(--color-primary);
   color: var(--color-on-primary);
 }
 

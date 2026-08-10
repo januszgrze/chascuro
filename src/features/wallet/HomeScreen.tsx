@@ -195,10 +195,28 @@ const HOME_VIEW_DEPTH: Record<HomeView, number> = {
   settings: 1,
 };
 
+const HOME_VIEW_POSITION: Partial<Record<HomeView, number>> = {
+  home: 0,
+  'ecash-send': 1,
+  'lightning-send': 1,
+  'ecash-receive': 2,
+  'lightning-receive': 2,
+};
+
 function resolveDirection(
   from: HomeView,
   to: HomeView,
 ): ViewTransitionDirection {
+  const fromPosition = HOME_VIEW_POSITION[from];
+  const toPosition = HOME_VIEW_POSITION[to];
+  if (
+    fromPosition !== undefined &&
+    toPosition !== undefined &&
+    fromPosition !== toPosition
+  ) {
+    return toPosition > fromPosition ? 'forward' : 'back';
+  }
+
   const delta = HOME_VIEW_DEPTH[to] - HOME_VIEW_DEPTH[from];
   if (delta > 0) {
     return 'forward';
@@ -213,6 +231,9 @@ export function HomeScreen(props: HomeScreenProps) {
   const [view, setView] = useState<HomeView>('home');
   const viewRef = useRef<HomeView>('home');
   const transitionTo = (next: HomeView) => {
+    if (next === viewRef.current) {
+      return;
+    }
     runViewTransition(resolveDirection(viewRef.current, next), () => {
       viewRef.current = next;
       setView(next);
@@ -380,7 +401,10 @@ function WalletOverview({
           className="home-nav-btn home-nav-balance is-active"
           aria-hidden="true"
         >
-          <BitcoinMark />
+          <span className="wallet-nav-indicator" />
+          <span className="wallet-nav-brand">
+            <BitcoinMark />
+          </span>
         </span>
         <button
           className="home-nav-btn"
@@ -388,7 +412,9 @@ function WalletOverview({
           aria-label="Send"
           onClick={() => onNavigate('lightning-send')}
         >
-          <ArrowUpIcon />
+          <span className="wallet-nav-icon">
+            <ArrowUpIcon />
+          </span>
         </button>
         <button
           className="home-nav-btn"
@@ -396,7 +422,9 @@ function WalletOverview({
           aria-label="Receive"
           onClick={() => onNavigate('ecash-receive')}
         >
-          <ArrowDownIcon />
+          <span className="wallet-nav-icon">
+            <ArrowDownIcon />
+          </span>
         </button>
       </nav>
     </section>
@@ -637,16 +665,20 @@ function EcashSendScreen({
       setError(result.error);
       return;
     }
-    setSentAmount(amount);
-    setExported(result.value);
-    setAmount('');
+    runViewTransition('forward', () => {
+      setSentAmount(amount);
+      setExported(result.value);
+      setAmount('');
+    });
   }
 
   function discard() {
-    exported?.notes.clear();
-    setExported(undefined);
-    setSentAmount(undefined);
-    setCopyStatus(undefined);
+    runViewTransition('back', () => {
+      exported?.notes.clear();
+      setExported(undefined);
+      setSentAmount(undefined);
+      setCopyStatus(undefined);
+    });
   }
 
   if (exported !== undefined) {
@@ -786,14 +818,18 @@ function LightningReceiveScreen({
       setError(result.error);
       return;
     }
-    setReceive(result.value);
-    setAmount('');
+    runViewTransition('forward', () => {
+      setReceive(result.value);
+      setAmount('');
+    });
   }
 
   function discard() {
-    receive?.invoice.clear();
-    setReceive(undefined);
-    setCopyStatus(undefined);
+    runViewTransition('back', () => {
+      receive?.invoice.clear();
+      setReceive(undefined);
+      setCopyStatus(undefined);
+    });
   }
 
   if (!enabled) {

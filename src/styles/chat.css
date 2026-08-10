@@ -1651,7 +1651,8 @@
     transform 150ms ease;
 }
 
-.chat-composer-plus:active {
+.chat-composer-plus:active,
+.chat-composer-plus.is-pressed {
   transform: scale(0.9);
 }
 
@@ -1669,11 +1670,13 @@
     filter 120ms ease;
 }
 
-.chat-tray-item:not(:disabled):active {
+.chat-tray-item:not(:disabled):active,
+.chat-tray-item.is-pressed:not(:disabled) {
   transform: translateY(1px);
 }
 
-.chat-tray-item:not(:disabled):active .chat-tray-icon {
+.chat-tray-item:not(:disabled):active .chat-tray-icon,
+.chat-tray-item.is-pressed:not(:disabled) .chat-tray-icon {
   transform: scale(0.9);
 }
 
@@ -1683,7 +1686,8 @@
     background 120ms ease;
 }
 
-.chat-sticker:active {
+.chat-sticker:active,
+.chat-sticker.is-pressed {
   transform: scale(0.86);
   background: var(--color-surface);
 }
@@ -1702,6 +1706,17 @@
   }
 
   .chat-composer-plus.is-open {
+    transform: none;
+  }
+
+  .chat-composer-plus:active,
+  .chat-composer-plus.is-pressed,
+  .chat-tray-item:not(:disabled):active,
+  .chat-tray-item.is-pressed:not(:disabled),
+  .chat-tray-item:not(:disabled):active .chat-tray-icon,
+  .chat-tray-item.is-pressed:not(:disabled) .chat-tray-icon,
+  .chat-sticker:active,
+  .chat-sticker.is-pressed {
     transform: none;
   }
 }

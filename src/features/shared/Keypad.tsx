@@ -1,4 +1,5 @@
 import { BackspaceIcon } from './icons';
+import { PressableButton } from './PressableButton';
 
 interface KeypadProps {
   onDigit(digit: string): void;
@@ -21,7 +22,7 @@ export function Keypad({
         (row, rowIndex) => (
           <div className="keypad-row" key={rowIndex}>
             {row.map((digit) => (
-              <button
+              <PressableButton
                 key={digit}
                 className="keypad-key"
                 type="button"
@@ -30,14 +31,14 @@ export function Keypad({
                 onClick={() => onDigit(digit)}
               >
                 {digit}
-              </button>
+              </PressableButton>
             ))}
           </div>
         ),
       )}
       <div className="keypad-row">
         <span className="keypad-key-empty" />
-        <button
+        <PressableButton
           className="keypad-key"
           type="button"
           disabled={disabled}
@@ -45,8 +46,8 @@ export function Keypad({
           onClick={() => onDigit('0')}
         >
           0
-        </button>
-        <button
+        </PressableButton>
+        <PressableButton
           className="keypad-key"
           type="button"
           disabled={disabled || backspaceDisabled}
@@ -54,7 +55,7 @@ export function Keypad({
           onClick={onBackspace}
         >
           <BackspaceIcon />
-        </button>
+        </PressableButton>
       </div>
     </div>
   );

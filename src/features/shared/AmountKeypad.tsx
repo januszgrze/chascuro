@@ -35,10 +35,14 @@ export function AmountKeypad({
   }
 
   return (
-    <div>
+    <div className="amount-keypad">
       <div className="amount-display">
         <BitcoinMark className="amount-symbol" />
-        <span className="amount-value">{groupDigits(value)}</span>
+        <span className="amount-value">
+          <span key={value} className="amount-value-tick">
+            {groupDigits(value)}
+          </span>
+        </span>
         <span className="visually-hidden" role="status">
           {groupDigits(value)} sats entered
         </span>

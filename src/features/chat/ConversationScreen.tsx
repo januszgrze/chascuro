@@ -18,6 +18,7 @@ import {
 } from '../../domain';
 import { BitcoinMark } from '../shared/BitcoinMark';
 import { Keypad } from '../shared/Keypad';
+import { PressableButton } from '../shared/PressableButton';
 import { QrCode } from '../shared/QrCode';
 import { ScreenError } from '../shared/ScreenFrame';
 import { shareText } from '../shared/share';
@@ -398,7 +399,7 @@ export function ConversationScreen() {
             className="chat-composer"
             onSubmit={(event) => void submitMessage(event)}
           >
-            <button
+            <PressableButton
               className={`chat-composer-plus${panel !== 'none' ? ' is-open' : ''}`}
               type="button"
               aria-label={panel === 'none' ? 'More actions' : 'Close actions'}
@@ -408,7 +409,7 @@ export function ConversationScreen() {
               }
             >
               <PlusGlyph />
-            </button>
+            </PressableButton>
             <div className="chat-composer-field">
               <label className="visually-hidden" htmlFor="chat-message-draft">
                 Message
@@ -628,7 +629,7 @@ function ComposerTray({
 }) {
   return (
     <div className="chat-tray" role="menu" aria-label="Message actions">
-      <button
+      <PressableButton
         className="chat-tray-item"
         type="button"
         role="menuitem"
@@ -639,8 +640,8 @@ function ComposerTray({
           <BitcoinMark className="chat-tray-btc" />
         </span>
         <span className="chat-tray-label">Pay</span>
-      </button>
-      <button
+      </PressableButton>
+      <PressableButton
         className="chat-tray-item"
         type="button"
         role="menuitem"
@@ -650,19 +651,29 @@ function ComposerTray({
           <StickerGlyph />
         </span>
         <span className="chat-tray-label">Stickers</span>
-      </button>
-      <button className="chat-tray-item" type="button" role="menuitem" disabled>
+      </PressableButton>
+      <PressableButton
+        className="chat-tray-item"
+        type="button"
+        role="menuitem"
+        disabled
+      >
         <span className="chat-tray-icon" aria-hidden="true">
           <PhotosGlyph />
         </span>
         <span className="chat-tray-label">Photos</span>
-      </button>
-      <button className="chat-tray-item" type="button" role="menuitem" disabled>
+      </PressableButton>
+      <PressableButton
+        className="chat-tray-item"
+        type="button"
+        role="menuitem"
+        disabled
+      >
         <span className="chat-tray-icon" aria-hidden="true">
           <CameraGlyph />
         </span>
         <span className="chat-tray-label">Camera</span>
-      </button>
+      </PressableButton>
     </div>
   );
 }
@@ -721,7 +732,7 @@ function StickerPanel({ onSend }: { onSend: (sticker: string) => void }) {
   return (
     <div className="chat-sticker-panel" aria-label="Stickers">
       {STICKERS.map((sticker) => (
-        <button
+        <PressableButton
           key={sticker}
           className="chat-sticker"
           type="button"
@@ -729,7 +740,7 @@ function StickerPanel({ onSend }: { onSend: (sticker: string) => void }) {
           onClick={() => onSend(sticker)}
         >
           {sticker}
-        </button>
+        </PressableButton>
       ))}
     </div>
   );
