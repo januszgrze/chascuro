@@ -49,6 +49,24 @@ test('completes the explicit simulated onboarding flow on mobile', async ({
   await page.getByRole('button', { name: 'Backup and settings' }).click();
   await page
     .locator('summary')
+    .filter({ hasText: /^Seed & PIN$/ })
+    .click();
+  await page.getByRole('button', { name: 'Reveal recovery words' }).click();
+  await expect(page.locator('.settings-word-grid .word-row')).toHaveCount(12);
+  await expect(
+    page.getByText(/Anyone with them can take your money/),
+  ).toBeVisible();
+  await expect(page.locator('html')).toHaveJSProperty(
+    'scrollWidth',
+    await page.locator('html').evaluate((element) => element.clientWidth),
+  );
+  await page.screenshot({
+    path: testInfo.outputPath('mobile-settings-recovery.png'),
+    fullPage: true,
+  });
+
+  await page
+    .locator('summary')
     .filter({ hasText: /^Wallet$/ })
     .click();
   await page.getByRole('button', { name: 'Lock wallet' }).click();

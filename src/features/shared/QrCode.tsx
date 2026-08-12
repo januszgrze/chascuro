@@ -16,7 +16,8 @@ export function QrCode({ value, label }: QrCodeProps) {
 
   useEffect(() => {
     let active = true;
-    void QRCode.toDataURL(value, {
+    void QRCode.toString(value, {
+      type: 'svg',
       errorCorrectionLevel: 'L',
       margin: 2,
       width: 280,
@@ -25,9 +26,12 @@ export function QrCode({ value, label }: QrCodeProps) {
         light: '#ffffffff',
       },
     }).then(
-      (url) => {
+      (svg) => {
         if (active) {
-          setResult({ value, dataUrl: url });
+          setResult({
+            value,
+            dataUrl: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
+          });
         }
       },
       () => {

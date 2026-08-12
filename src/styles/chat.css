@@ -2,9 +2,12 @@
 
 .chat-shell {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  padding-bottom: var(--app-bottom-gutter);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .chat-topbar {
@@ -406,7 +409,7 @@
   flex-direction: column;
   gap: 12px;
   margin-top: auto;
-  padding: 16px 20px calc(28px + env(safe-area-inset-bottom));
+  padding: 16px 20px 28px;
 }
 
 .chat-consent {
@@ -535,7 +538,7 @@
 /* Chat — conversation and composer */
 
 .chat-conversation {
-  min-height: 100%;
+  min-height: 0;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -716,7 +719,7 @@
   grid-template-columns: minmax(0, 1fr) 48px;
   align-items: end;
   gap: 10px;
-  padding: 10px 16px calc(14px + env(safe-area-inset-bottom));
+  padding: 10px 16px 14px;
   border-top: 1px solid var(--color-line);
   background: rgba(247, 244, 238, 0.96);
   backdrop-filter: blur(14px);
@@ -780,7 +783,7 @@
 .chat-product-form {
   display: grid;
   gap: 12px;
-  margin: 22px 20px calc(24px + env(safe-area-inset-bottom));
+  margin: 22px 20px var(--app-bottom-gutter);
 }
 
 .chat-product-form .field-label {
@@ -840,7 +843,7 @@
   display: grid;
   gap: 10px;
   margin-top: auto;
-  padding: 0 20px calc(20px + env(safe-area-inset-bottom));
+  padding: 0 20px 20px;
 }
 
 .chat-danger-zone {
@@ -1476,7 +1479,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
+  padding: 10px 14px 14px;
   border-top: 0;
   background: none;
   backdrop-filter: none;
@@ -1651,7 +1654,8 @@
     transform 150ms ease;
 }
 
-.chat-composer-plus:active {
+.chat-composer-plus:active,
+.chat-composer-plus.is-pressed {
   transform: scale(0.9);
 }
 
@@ -1669,11 +1673,13 @@
     filter 120ms ease;
 }
 
-.chat-tray-item:not(:disabled):active {
+.chat-tray-item:not(:disabled):active,
+.chat-tray-item.is-pressed:not(:disabled) {
   transform: translateY(1px);
 }
 
-.chat-tray-item:not(:disabled):active .chat-tray-icon {
+.chat-tray-item:not(:disabled):active .chat-tray-icon,
+.chat-tray-item.is-pressed:not(:disabled) .chat-tray-icon {
   transform: scale(0.9);
 }
 
@@ -1683,7 +1689,8 @@
     background 120ms ease;
 }
 
-.chat-sticker:active {
+.chat-sticker:active,
+.chat-sticker.is-pressed {
   transform: scale(0.86);
   background: var(--color-surface);
 }
@@ -1702,6 +1709,17 @@
   }
 
   .chat-composer-plus.is-open {
+    transform: none;
+  }
+
+  .chat-composer-plus:active,
+  .chat-composer-plus.is-pressed,
+  .chat-tray-item:not(:disabled):active,
+  .chat-tray-item.is-pressed:not(:disabled),
+  .chat-tray-item:not(:disabled):active .chat-tray-icon,
+  .chat-tray-item.is-pressed:not(:disabled) .chat-tray-icon,
+  .chat-sticker:active,
+  .chat-sticker.is-pressed {
     transform: none;
   }
 }
@@ -1723,7 +1741,7 @@
   width: 100%;
   max-width: 390px;
   margin-inline: auto;
-  padding: 8px 20px calc(24px + env(safe-area-inset-bottom));
+  padding: 8px 20px calc(var(--app-bottom-gutter) + env(safe-area-inset-bottom));
   border-radius: 26px 26px 0 0;
   background: var(--color-canvas);
   box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.22);

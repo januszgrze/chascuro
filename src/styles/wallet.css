@@ -27,9 +27,46 @@
   line-height: 72px;
 }
 
+.amount-value-tick {
+  display: inline-block;
+  transform-origin: center 65%;
+}
+
+.amount-keypad .keypad-key,
+.pinpad .keypad-key {
+  border-radius: var(--radius-full);
+  /* Release: spring back with a slight overshoot past scale(1), matching the
+   * SwiftUI spring(bounce:) release on the native app's card press. */
+  transition:
+    background-color 120ms ease-out,
+    transform 240ms cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+.amount-keypad .keypad-key:not(:disabled):active,
+.pinpad .keypad-key:not(:disabled):active,
+.amount-keypad .keypad-key.is-pressed:not(:disabled),
+.pinpad .keypad-key.is-pressed:not(:disabled) {
+  background: var(--color-accent-wash);
+  transform: scale(0.94);
+  /* Press-down stays fast and direct; only the release springs. */
+  transition:
+    background-color 120ms ease-out,
+    transform 110ms ease-out;
+}
+
+.amount-keypad .keypad-key-confirm svg {
+  color: var(--color-accent);
+}
+
+.amount-keypad .keypad-key-confirm:disabled svg {
+  color: var(--color-muted);
+  opacity: 0.55;
+}
+
 .sr-shell {
   display: flex;
   flex: 1;
+  min-height: 0;
   flex-direction: column;
 }
 
@@ -101,6 +138,7 @@
 }
 
 .sr-toggle-btn {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -116,7 +154,6 @@
 }
 
 .sr-shell--light .sr-toggle-btn.is-active {
-  background: var(--color-primary);
   color: var(--color-on-primary);
 }
 
@@ -125,23 +162,57 @@
 }
 
 .sr-shell--dark .sr-toggle-btn.is-active {
-  border: 1.5px solid var(--color-accent);
-  color: var(--color-accent);
+  color: var(--color-on-primary);
+}
+
+.sr-toggle-indicator {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: var(--radius-full);
+  view-transition-name: wallet-rail-active;
+}
+
+.sr-shell--light .sr-toggle-indicator {
+  background: var(--color-primary);
+}
+
+.sr-shell--dark .sr-toggle-indicator {
+  background: var(--color-primary);
+}
+
+.sr-toggle-icon {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sr-toggle-icon--lightning {
+  view-transition-name: wallet-rail-lightning-icon;
+}
+
+.sr-toggle-icon--ecash {
+  view-transition-name: wallet-rail-ecash-icon;
 }
 
 .sr-body {
   display: flex;
   flex: 1;
+  min-height: 0;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .sr-nav {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   width: min(342px, calc(100% - 48px));
   height: 68px;
-  margin: 8px auto calc(28px + env(safe-area-inset-bottom));
+  margin: 8px auto var(--app-bottom-gutter);
   padding: 8px;
   border-radius: var(--radius-full);
 }
@@ -157,6 +228,7 @@
 }
 
 .sr-nav-btn {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -168,8 +240,25 @@
 }
 
 .sr-nav-btn.is-active {
-  background: var(--color-primary);
   color: var(--color-on-primary);
+}
+
+.wallet-nav-indicator {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+  view-transition-name: wallet-nav-active;
+}
+
+.wallet-nav-brand,
+.wallet-nav-icon {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .sr-nav-balance {
@@ -208,12 +297,31 @@
   font-size: var(--text-body);
   font-weight: var(--font-weight-bold);
   line-height: 18px;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease;
 }
 
 .cta-send:disabled {
   background: var(--color-surface);
   color: var(--color-muted);
   opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .amount-keypad .keypad-key,
+  .pinpad .keypad-key,
+  .cta-send {
+    transition: none;
+  }
+
+  .amount-keypad .keypad-key:not(:disabled):active,
+  .pinpad .keypad-key:not(:disabled):active,
+  .amount-keypad .keypad-key.is-pressed:not(:disabled),
+  .pinpad .keypad-key.is-pressed:not(:disabled) {
+    transform: none;
+    transition: none;
+  }
 }
 
 /* Dark scanner */
@@ -226,6 +334,11 @@
   justify-content: flex-start;
   gap: 32px;
   padding: 158px 24px 0;
+}
+
+.scan-body--manual {
+  gap: 10px;
+  padding-top: 32px;
 }
 
 .scan-frame {
@@ -283,8 +396,9 @@
 .scan-manual {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
   width: 100%;
+  view-transition-name: wallet-manual-entry;
 }
 
 .scan-manual textarea {
@@ -422,7 +536,7 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  margin: auto 20px calc(40px + env(safe-area-inset-bottom));
+  margin: auto 20px 40px;
   padding: 18px;
   border: 0;
   border-radius: var(--radius-full);
@@ -431,6 +545,57 @@
   font-size: var(--text-body);
   font-weight: var(--font-weight-bold);
   line-height: 18px;
+}
+
+/*
+ * Pending affordance: three dots that ripple in place while an action is in
+ * flight, instead of a separate pending screen. Used on the Pay button while a
+ * Lightning send settles and on the keypad confirm key while an invoice or link
+ * is being created — the control stays put and "breathes" until it resolves.
+ */
+.pending-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-inline-start: -2px;
+}
+
+.pending-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pending-dot 1050ms ease-in-out infinite;
+}
+
+.pending-dots i:nth-child(2) {
+  animation-delay: 160ms;
+}
+
+.pending-dots i:nth-child(3) {
+  animation-delay: 320ms;
+}
+
+@keyframes pending-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(1px);
+  }
+
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pending-dots i {
+    animation: none;
+    opacity: 0.6;
+    transform: none;
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -535,6 +700,7 @@
 .home-shell .activity-feed {
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding-bottom: 112px;
   -webkit-mask-image: linear-gradient(
     to bottom,
@@ -624,7 +790,7 @@
 .home-nav {
   position: absolute;
   left: 50%;
-  bottom: calc(24px + env(safe-area-inset-bottom));
+  bottom: var(--app-bottom-gutter);
   transform: translateX(-50%);
   z-index: 2;
   display: flex;
@@ -639,6 +805,7 @@
 }
 
 .home-nav-btn {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -651,7 +818,6 @@
 }
 
 .home-nav-btn.is-active {
-  background: var(--color-primary);
   color: var(--color-on-primary);
 }
 
@@ -1211,7 +1377,7 @@ p {
   align-items: center;
   justify-content: center;
   gap: 48px;
-  padding: 0 20px calc(40px + env(safe-area-inset-bottom));
+  padding: 0 20px 40px;
   text-align: center;
 }
 
@@ -1235,6 +1401,84 @@ p {
 .result-icon--success {
   background: var(--color-positive);
   box-shadow: 0 16px 40px rgba(46, 156, 104, 0.35);
+}
+
+/*
+ * Success moment. The icon lands with a short spring-like overshoot while the
+ * copy settles up beneath it. Both run on mount ("both" fill) so the beat plays
+ * whether the screen arrived over a view transition (send/redeem/pay) or from a
+ * passive settle (an incoming Lightning payment resolving in place).
+ */
+.result-icon {
+  animation: result-content-rise 360ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+.result-icon--success {
+  animation: result-icon-pop 460ms cubic-bezier(0.22, 1.35, 0.36, 1) both;
+}
+
+.result-title {
+  animation: result-content-rise 360ms cubic-bezier(0.23, 1, 0.32, 1) 40ms both;
+}
+
+.result-amount {
+  animation: result-content-rise 380ms cubic-bezier(0.23, 1, 0.32, 1) 90ms both;
+}
+
+.result-sub {
+  animation: result-content-rise 360ms cubic-bezier(0.23, 1, 0.32, 1) 140ms both;
+}
+
+@keyframes result-icon-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.62);
+  }
+
+  62% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes result-content-rise {
+  from {
+    opacity: 0;
+    transform: translateY(9px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/*
+ * When the result screen arrives over a crossfade from a look-alike screen
+ * (ecash redeem -> received), hold the icon and copy at their resting state so
+ * they overlap the outgoing screen exactly and read as static.
+ */
+.result-screen--hold .result-icon,
+.result-screen--hold .result-icon--success,
+.result-screen--hold .result-title,
+.result-screen--hold .result-amount,
+.result-screen--hold .result-sub {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .result-icon,
+  .result-icon--success,
+  .result-title,
+  .result-amount,
+  .result-sub {
+    animation: none;
+  }
 }
 
 .result-icon--pending {
@@ -1368,16 +1612,22 @@ p {
   box-shadow: 0 22px 50px rgba(0, 0, 0, 0.45);
 }
 
-.qr-card .qr-frame {
+.qr-share .qr-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.qr-share .qr-card .qr-frame {
+  margin: 0;
   padding: 0;
   background: transparent;
   box-shadow: none;
 }
 
-.qr-card img {
+.qr-share .qr-card img {
   display: block;
-  width: 208px;
-  height: 208px;
+  width: min(70vw, 280px);
+  height: auto;
 }
 
 .qr-card .fine-print {
@@ -1388,18 +1638,19 @@ p {
 
 .wallet-dock {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   width: min(342px, calc(100% - 48px));
-  margin: 8px auto calc(24px + env(safe-area-inset-bottom));
+  margin: 8px auto var(--app-bottom-gutter);
   padding: 8px;
-  flex-shrink: 0;
   border-radius: var(--radius-full);
   background: rgba(255, 255, 255, 0.12);
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .wallet-dock-btn {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1412,7 +1663,6 @@ p {
 }
 
 .wallet-dock-btn.is-active {
-  background: var(--color-primary);
   color: var(--color-on-primary);
 }
 
@@ -1504,9 +1754,10 @@ p {
 
 .page-shell {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  padding-bottom: var(--app-bottom-gutter);
 }
 
 .page-topbar {
@@ -1568,6 +1819,28 @@ p {
 
 .activity-status.is-positive {
   color: var(--color-positive);
+}
+
+.tx-detail-shell {
+  --color-canvas: #121316;
+  --color-surface: #1c1d22;
+  --color-ink: #f3efe4;
+  --color-muted: #8b8a97;
+  --color-line: #2a2c33;
+  --color-primary: #f3efe4;
+  --color-on-primary: #0b0814;
+  --color-accent: #f3efe4;
+  --color-accent-ink: #f3efe4;
+  --color-accent-wash: #24252b;
+  --color-positive: #34c77b;
+  --color-warn-wash: #3a2f2a;
+  --color-warn-ink: #e6b8a6;
+  --color-warn-stroke: #e5674a;
+
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .tx-detail-hero {
@@ -1632,6 +1905,12 @@ p {
   padding: 16px 20px 0;
 }
 
+.page-shell > .activity-feed {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 /* Settings accordion */
 
 .settings-list {
@@ -1639,8 +1918,24 @@ p {
   flex-direction: column;
 }
 
+.settings-shell {
+  min-height: 0;
+  color: var(--color-ink);
+}
+
+.settings-shell .settings-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .settings-row {
   border-bottom: 1px solid var(--color-line);
+}
+
+.settings-row[open] {
+  background: color-mix(in srgb, var(--color-surface) 22%, transparent);
 }
 
 .settings-summary {
@@ -1691,20 +1986,133 @@ p {
 .settings-panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 0 20px 20px 84px;
+  gap: 16px;
+  padding: 4px 20px 24px;
+  animation: settings-panel-in 180ms ease-out both;
 }
 
-.settings-panel-title {
+.settings-panel > .details-list,
+.settings-panel > .notice,
+.settings-panel > .word-grid,
+.settings-panel > .secondary-button {
+  width: 100%;
   margin: 0;
+}
+
+.settings-panel > .secondary-button {
+  flex-shrink: 0;
+}
+
+.settings-panel .details-list dd,
+.settings-panel .notice,
+.settings-panel .word-text,
+.settings-panel .settings-field {
+  color: var(--color-ink);
+}
+
+.settings-panel .fine-print {
+  margin: 0;
+}
+
+.settings-seed-warning {
+  width: 100%;
+  margin: 0;
+}
+
+.settings-word-grid {
+  padding: var(--space-2) 18px;
+}
+
+.settings-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  color: var(--color-ink);
   font-size: var(--text-label);
   font-weight: var(--font-weight-semibold);
-  color: var(--color-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
 }
 
-.settings-save {
-  margin-top: auto;
-  margin-inline: 20px;
+.settings-field > span:first-child {
+  color: var(--color-muted);
+}
+
+.settings-field input {
+  width: 100%;
+  min-height: 52px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  outline: none;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+}
+
+.settings-field input:focus-visible {
+  border-color: var(--color-ink);
+  box-shadow: 0 0 0 2px rgba(243, 239, 228, 0.14);
+}
+
+.settings-danger {
+  display: grid;
+  gap: 16px;
+}
+
+.settings-danger-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--color-warn-wash);
+}
+
+.settings-danger-warning > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--color-warn-stroke);
+}
+
+.settings-danger-warning h2 {
+  margin: 0 0 5px;
+  color: var(--color-warn-ink);
+  font-size: var(--text-body);
+  line-height: 20px;
+}
+
+.settings-danger-warning p {
+  margin: 0;
+  color: var(--color-warn-ink);
+  font-size: var(--text-label);
+  line-height: 18px;
+}
+
+.settings-danger-action {
+  width: 100%;
+  min-height: 52px;
+  padding: 16px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-warn-wash);
+  color: var(--color-warn-ink);
+  font-weight: var(--font-weight-bold);
+}
+
+@keyframes settings-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-panel {
+    animation: none;
+  }
 }

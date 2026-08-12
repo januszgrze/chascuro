@@ -1,5 +1,5 @@
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 import { createSecurityHeaders } from './src/config/security-headers';
@@ -25,6 +25,9 @@ function escapeRegExp(value: string): string {
 }
 
 export default defineConfig(({ mode }) => {
+  const localEnv = loadEnv(mode, process.cwd(), 'CHASCURO_');
+  const developmentAllowedHost =
+    localEnv.CHASCURO_DEV_ALLOWED_HOST?.trim() || undefined;
   const base = deploymentBasePath();
   const escapedBase = escapeRegExp(base);
   const productionSecurityHeaders = createSecurityHeaders();
@@ -81,8 +84,8 @@ export default defineConfig(({ mode }) => {
           start_url: base,
           scope: base,
           display: 'standalone',
-          background_color: '#ffffff',
-          theme_color: '#000000',
+          background_color: '#121316',
+          theme_color: '#121316',
           orientation: 'portrait-primary',
           icons: [
             {
@@ -133,6 +136,9 @@ export default defineConfig(({ mode }) => {
       headers: securityHeaders,
     },
     server: {
+      ...(developmentAllowedHost === undefined
+        ? {}
+        : { allowedHosts: [developmentAllowedHost] }),
       // Vite's React refresh preamble and error overlay use development-only
       // inline script/style injection. The strict production CSP remains active
       // for `vite preview` and the generated deployment `_headers` file.

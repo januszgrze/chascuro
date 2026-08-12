@@ -41,6 +41,9 @@
   --radius-lg: 22px;
   --radius-full: 999px;
 
+  /* The app frame owns device safe areas; views add only this content gutter. */
+  --app-bottom-gutter: 12px;
+
   color: var(--color-ink);
   background: var(--color-canvas);
   font-family: var(--font-sans);
@@ -78,16 +81,26 @@
 
 html {
   min-width: 320px;
-  min-height: 100%;
-  background: var(--color-canvas);
+  height: 100%;
+  background: #121316;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
   min-width: 320px;
-  min-height: 100vh;
+  height: 100%;
   margin: 0;
-  background: var(--color-canvas);
+  background: #121316;
   color: var(--color-ink);
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+#root {
+  height: 100%;
+  background: #121316;
+  overflow: hidden;
 }
 
 button,
@@ -123,11 +136,12 @@ textarea {
 
 .app-frame {
   width: 100%;
-  min-height: 100vh;
-  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   background: var(--color-canvas);
+  overflow: hidden;
   padding: env(safe-area-inset-top) env(safe-area-inset-right)
     env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
@@ -241,18 +255,27 @@ textarea {
   width: 100%;
   max-width: 390px;
   margin-inline: auto;
-}
-
-.app-frame:has(.home-shell) {
-  height: 100vh;
-  height: 100dvh;
+  overflow: hidden;
 }
 
 .screen > section {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  animation: screen-in 150ms ease-out both;
+  animation: screen-in 216ms ease-out both;
+}
+
+.screen
+  > :is(
+    .home-shell,
+    .sr-shell,
+    .qr-share,
+    .confirm-shell,
+    .result-screen,
+    .page-shell
+  ) {
+  animation: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -273,58 +296,278 @@ textarea {
   }
 }
 
-/* Wallet screen transitions (View Transitions API) */
+/* Screen transitions (View Transitions API) */
+
+.screen--onboarding > section {
+  view-transition-name: onboarding-screen;
+}
+
+.screen--onboarding .onb-progress {
+  view-transition-name: onboarding-progress;
+}
 
 .home-shell,
 .sr-shell,
 .qr-share,
 .confirm-shell,
+.result-screen,
 .page-shell {
   view-transition-name: wallet-screen;
 }
 
+/*
+ * Wallet screens are otherwise transparent. Give their transition snapshots an
+ * opaque surface so the old and new screens cannot show through each other.
+ */
+:root[data-vt-dir]
+  :is(
+    .home-shell,
+    .sr-shell,
+    .qr-share,
+    .confirm-shell,
+    .result-screen,
+    .page-shell
+  ) {
+  background: var(--color-canvas);
+}
+
 .home-nav,
-.sr-nav {
+.sr-nav,
+.wallet-dock {
   view-transition-name: wallet-nav;
 }
 
-.home-nav-balance,
-.sr-nav-balance {
+.wallet-nav-brand {
   view-transition-name: wallet-brand;
 }
 
 ::view-transition-group(wallet-nav),
-::view-transition-group(wallet-brand) {
-  animation-duration: 260ms;
-  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+::view-transition-group(wallet-brand),
+::view-transition-group(wallet-nav-active),
+::view-transition-group(wallet-rail-active),
+::view-transition-group(wallet-rail-lightning-icon),
+::view-transition-group(wallet-rail-ecash-icon) {
+  animation-duration: 288ms;
+  animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+::view-transition-group(wallet-rail-active) {
+  z-index: 1;
+}
+
+::view-transition-group(wallet-rail-lightning-icon),
+::view-transition-group(wallet-rail-ecash-icon) {
+  z-index: 2;
+}
+
+::view-transition-old(wallet-manual-entry) {
+  animation: wallet-manual-entry-out 180ms ease-in both;
+  mix-blend-mode: normal;
+}
+
+::view-transition-new(wallet-manual-entry) {
+  animation: wallet-manual-entry-in 240ms cubic-bezier(0.23, 1, 0.32, 1) both;
+  mix-blend-mode: normal;
+}
+
+::view-transition-image-pair(root),
+::view-transition-image-pair(wallet-screen) {
+  isolation: auto;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
 }
 
 ::view-transition-old(wallet-screen),
 ::view-transition-new(wallet-screen) {
-  animation-duration: 240ms;
+  animation-duration: 288ms;
+  animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(onboarding-screen),
+::view-transition-new(onboarding-screen) {
+  animation-duration: 346ms;
   animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
+::view-transition-group(onboarding-progress) {
+  animation-duration: 346ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+::view-transition-old(onboarding-progress),
+::view-transition-new(onboarding-progress) {
+  animation-duration: 230ms;
+  animation-timing-function: ease-out;
+}
+
 :root[data-vt-dir='forward']::view-transition-old(wallet-screen) {
+  animation-name: wallet-push-out-left;
+}
+
+:root[data-vt-dir='forward']::view-transition-old(onboarding-screen) {
   animation-name: wallet-slide-out-left;
 }
 
-:root[data-vt-dir='forward']::view-transition-new(wallet-screen) {
+:root[data-vt-dir='forward']::view-transition-new(onboarding-screen) {
   animation-name: wallet-slide-in-right;
 }
 
-:root[data-vt-dir='back']::view-transition-old(wallet-screen) {
+:root[data-vt-dir='back']::view-transition-old(onboarding-screen) {
   animation-name: wallet-slide-out-right;
 }
 
-:root[data-vt-dir='back']::view-transition-new(wallet-screen) {
+:root[data-vt-dir='back']::view-transition-new(onboarding-screen) {
   animation-name: wallet-slide-in-left;
+}
+
+:root[data-vt-dir='forward']::view-transition-new(wallet-screen) {
+  animation-name: wallet-push-in-right;
+}
+
+:root[data-vt-dir='back']::view-transition-old(wallet-screen) {
+  animation-name: wallet-push-out-right;
+}
+
+:root[data-vt-dir='back']::view-transition-new(wallet-screen) {
+  animation-name: wallet-push-in-left;
+}
+
+/*
+ * Lateral moves (send <-> receive, rail <-> rail) crossfade in place instead of
+ * pushing sideways: the outgoing screen dissolves over the fully-opaque incoming
+ * one, so there is no horizontal shove or height-driven wobble. The nav pill and
+ * rail indicator still slide, which carries the sense of direction.
+ */
+:root[data-vt-dir='lateral']::view-transition-old(wallet-screen) {
+  animation-name: wallet-fade-out;
+}
+
+:root[data-vt-dir='lateral']::view-transition-new(wallet-screen) {
+  animation-name: wallet-fade-in;
+}
+
+/*
+ * Settle: a slow, pure crossfade for moving between two screens that share the
+ * same layout (ecash redeem -> received). Because the icon and amount sit in the
+ * same place on both, the identical regions read as static while only the title
+ * and button cross-dissolve. Slower than a push so the change feels gentle.
+ */
+:root[data-vt-dir='settle']::view-transition-old(wallet-screen),
+:root[data-vt-dir='settle']::view-transition-new(wallet-screen) {
+  animation-duration: 600ms;
+  animation-timing-function: ease-in-out;
+}
+
+:root[data-vt-dir='settle']::view-transition-old(wallet-screen) {
+  animation-name: wallet-fade-out;
+}
+
+:root[data-vt-dir='settle']::view-transition-new(wallet-screen) {
+  animation-name: wallet-settle-in;
+}
+
+@keyframes wallet-settle-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/*
+ * Dismiss: returning home after a completed payment. The success card recedes
+ * (scales down) and fades while home fades up beneath it — a "close" gesture,
+ * distinct from the sideways push used between peer screens.
+ */
+:root[data-vt-dir='dismiss']::view-transition-old(wallet-screen),
+:root[data-vt-dir='dismiss']::view-transition-new(wallet-screen) {
+  animation-duration: 440ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+:root[data-vt-dir='dismiss']::view-transition-old(wallet-screen) {
+  animation-name: wallet-dismiss-out;
+}
+
+:root[data-vt-dir='dismiss']::view-transition-new(wallet-screen) {
+  animation-name: wallet-dismiss-in;
+}
+
+@keyframes wallet-dismiss-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+@keyframes wallet-dismiss-in {
+  from {
+    opacity: 0;
+    transform: scale(1.01);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes wallet-push-in-right {
+  from {
+    transform: translateX(8%);
+  }
+
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes wallet-push-out-left {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(-8%);
+  }
+}
+
+@keyframes wallet-push-in-left {
+  from {
+    transform: translateX(-8%);
+  }
+
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes wallet-push-out-right {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(8%);
+  }
 }
 
 @keyframes wallet-slide-in-right {
   from {
     opacity: 0;
-    transform: translateX(28px);
+    transform: translateX(20%);
   }
 
   to {
@@ -341,14 +584,14 @@ textarea {
 
   to {
     opacity: 0;
-    transform: translateX(-28px);
+    transform: translateX(-20%);
   }
 }
 
 @keyframes wallet-slide-in-left {
   from {
     opacity: 0;
-    transform: translateX(-28px);
+    transform: translateX(-20%);
   }
 
   to {
@@ -365,7 +608,53 @@ textarea {
 
   to {
     opacity: 0;
-    transform: translateX(28px);
+    transform: translateX(20%);
+  }
+}
+
+@keyframes wallet-fade-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes wallet-fade-in {
+  from {
+    opacity: 1;
+    transform: scale(0.992);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes wallet-manual-entry-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes wallet-manual-entry-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(6px);
   }
 }
 

@@ -20,6 +20,7 @@ interface SendReceiveShellProps {
   onNavigate(rail: PaymentRail, direction: PaymentDirection): void;
   onHome(): void;
   onKeyboard?(): void;
+  hideNavigation?: boolean;
   children: ReactNode;
 }
 
@@ -30,6 +31,7 @@ export function SendReceiveShell({
   onNavigate,
   onHome,
   onKeyboard,
+  hideNavigation = false,
   children,
 }: SendReceiveShellProps) {
   return (
@@ -46,7 +48,12 @@ export function SendReceiveShell({
             aria-label="Lightning"
             onClick={() => onNavigate('lightning', direction)}
           >
-            <BoltIcon />
+            {rail === 'lightning' && (
+              <span className="sr-toggle-indicator" aria-hidden="true" />
+            )}
+            <span className="sr-toggle-icon sr-toggle-icon--lightning">
+              <BoltIcon />
+            </span>
           </button>
           <button
             className={`sr-toggle-btn${rail === 'ecash' ? ' is-active' : ''}`}
@@ -55,7 +62,12 @@ export function SendReceiveShell({
             aria-label="Ecash"
             onClick={() => onNavigate('ecash', direction)}
           >
-            <LinkIcon />
+            {rail === 'ecash' && (
+              <span className="sr-toggle-indicator" aria-hidden="true" />
+            )}
+            <span className="sr-toggle-icon sr-toggle-icon--ecash">
+              <LinkIcon />
+            </span>
           </button>
         </div>
         {onKeyboard !== undefined && (
@@ -70,34 +82,48 @@ export function SendReceiveShell({
         )}
       </div>
       <div className="sr-body">{children}</div>
-      <nav className="sr-nav" aria-label="Wallet navigation">
-        <button
-          className="sr-nav-btn sr-nav-balance"
-          type="button"
-          aria-label="Wallet home"
-          onClick={onHome}
-        >
-          <BitcoinMark />
-        </button>
-        <button
-          className={`sr-nav-btn${direction === 'send' ? ' is-active' : ''}`}
-          type="button"
-          aria-pressed={direction === 'send'}
-          aria-label="Send"
-          onClick={() => onNavigate('lightning', 'send')}
-        >
-          <ArrowUpIcon />
-        </button>
-        <button
-          className={`sr-nav-btn${direction === 'receive' ? ' is-active' : ''}`}
-          type="button"
-          aria-pressed={direction === 'receive'}
-          aria-label="Receive"
-          onClick={() => onNavigate('ecash', 'receive')}
-        >
-          <ArrowDownIcon />
-        </button>
-      </nav>
+      {!hideNavigation && (
+        <nav className="sr-nav" aria-label="Wallet navigation">
+          <button
+            className="sr-nav-btn sr-nav-balance"
+            type="button"
+            aria-label="Wallet home"
+            onClick={onHome}
+          >
+            <span className="wallet-nav-brand">
+              <BitcoinMark />
+            </span>
+          </button>
+          <button
+            className={`sr-nav-btn${direction === 'send' ? ' is-active' : ''}`}
+            type="button"
+            aria-pressed={direction === 'send'}
+            aria-label="Send"
+            onClick={() => onNavigate('lightning', 'send')}
+          >
+            {direction === 'send' && (
+              <span className="wallet-nav-indicator" aria-hidden="true" />
+            )}
+            <span className="wallet-nav-icon">
+              <ArrowUpIcon />
+            </span>
+          </button>
+          <button
+            className={`sr-nav-btn${direction === 'receive' ? ' is-active' : ''}`}
+            type="button"
+            aria-pressed={direction === 'receive'}
+            aria-label="Receive"
+            onClick={() => onNavigate('ecash', 'receive')}
+          >
+            {direction === 'receive' && (
+              <span className="wallet-nav-indicator" aria-hidden="true" />
+            )}
+            <span className="wallet-nav-icon">
+              <ArrowDownIcon />
+            </span>
+          </button>
+        </nav>
+      )}
     </section>
   );
 }
