@@ -413,9 +413,14 @@ describe('HomeScreen scanned wallet input', () => {
     await user.click(screen.getByRole('button', { name: 'Review payment' }));
     await user.click(screen.getByRole('button', { name: /Pay.*100/ }));
 
+    // A submitted payment no longer shows a separate pending screen: the
+    // review screen stays put with the Pay button in its in-flight state until
+    // the payment settles.
+    expect(screen.getByRole('heading', { name: 'Pay invoice' })).toBeVisible();
     expect(
-      screen.getByRole('heading', { name: 'Payment pending' }),
-    ).toBeVisible();
+      screen.queryByRole('heading', { name: 'Payment pending' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Pay.*100/ })).toBeDisabled();
     expect(screen.queryByText('Thanks, paid!')).not.toBeInTheDocument();
 
     const settled = walletOperation({
@@ -816,11 +821,49 @@ describe('HomeScreen settings and secret-storage warnings', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(screen.getByRole('button', { name: 'Ecash' }));
     await user.click(screen.getByRole('button', { name: '1' }));
+    await user.click(screen.getByRole('button', { name: 'Review send' }));
     await user.click(screen.getByRole('button', { name: 'Create link' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Share these notes now.',
     );
+  });
+
+  it('reviews the ecash amount before minting the link', async () => {
+    const user = userEvent.setup();
+    const onCreateEcashSpend = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        operation: walletOperation({
+          id: 'reviewed-ecash',
+          kind: 'ecash_send',
+          direction: 'outgoing',
+          status: 'pending',
+        }),
+        notes: clearableSecretText('fedimint-ecash:reviewed'),
+        secretRecordRef: secretRecordRef('secret:reviewed-ecash'),
+      },
+    });
+    renderHome({ onCreateEcashSpend });
+
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(screen.getByRole('button', { name: 'Ecash' }));
+    await user.click(screen.getByRole('button', { name: '1' }));
+    await user.click(screen.getByRole('button', { name: '2' }));
+
+    // The check key only moves to a review step — no link is minted yet.
+    await user.click(screen.getByRole('button', { name: 'Review send' }));
+    expect(screen.getByRole('heading', { name: 'Send' })).toBeInTheDocument();
+    expect(screen.getByText('12')).toBeInTheDocument();
+    expect(onCreateEcashSpend).not.toHaveBeenCalled();
+
+    // Back returns to the keypad with the amount preserved, still unminted.
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    await user.click(screen.getByRole('button', { name: 'Review send' }));
+    await user.click(screen.getByRole('button', { name: 'Create link' }));
+
+    expect(onCreateEcashSpend).toHaveBeenCalledTimes(1);
+    expect(onCreateEcashSpend).toHaveBeenCalledWith('12');
   });
 });
 

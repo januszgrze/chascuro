@@ -1,6 +1,7 @@
 import { flushSync } from 'react-dom';
 
-export type ViewTransitionDirection = 'forward' | 'back' | 'lateral';
+export type ViewTransitionDirection =
+  'forward' | 'back' | 'lateral' | 'settle' | 'dismiss';
 
 function prefersReducedMotion(): boolean {
   return (

@@ -81,8 +81,8 @@ export default defineConfig(({ mode }) => {
           start_url: base,
           scope: base,
           display: 'standalone',
-          background_color: '#ffffff',
-          theme_color: '#000000',
+          background_color: '#121316',
+          theme_color: '#121316',
           orientation: 'portrait-primary',
           icons: [
             {
@@ -133,6 +133,7 @@ export default defineConfig(({ mode }) => {
       headers: securityHeaders,
     },
     server: {
+      allowedHosts: ['completable-jude-efficaciously.ngrok-free.dev'],
       // Vite's React refresh preamble and error overlay use development-only
       // inline script/style injection. The strict production CSP remains active
       // for `vite preview` and the generated deployment `_headers` file.

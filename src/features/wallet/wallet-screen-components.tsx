@@ -97,6 +97,7 @@ export function ResultScreen({
   subtitle,
   onBack,
   error,
+  hold = false,
   children,
 }: {
   titleId: string;
@@ -107,11 +108,17 @@ export function ResultScreen({
   subtitle?: ReactNode;
   onBack?: () => void;
   error?: string;
+  /**
+   * Hold the icon and copy static on entrance (no pop or rise). Used when the
+   * screen arrives over a crossfade from a screen that already showed them, so
+   * the shared elements stay put instead of re-animating.
+   */
+  hold?: boolean;
   children: ReactNode;
 }) {
   return (
     <section
-      className={`result-screen result-screen--${tone}`}
+      className={`result-screen result-screen--${tone}${hold ? ' result-screen--hold' : ''}`}
       aria-labelledby={titleId}
     >
       {onBack !== undefined && (

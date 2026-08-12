@@ -195,12 +195,16 @@ const HOME_VIEW_DEPTH: Record<HomeView, number> = {
   settings: 1,
 };
 
+// Send and receive sit at the same position: switching between them is a
+// lateral move (soft crossfade) rather than a sideways push, which otherwise
+// reads as a hard, shaky shove between two peer screens. Home still enters
+// send/receive as a forward push via the depth fallback below.
 const HOME_VIEW_POSITION: Partial<Record<HomeView, number>> = {
   home: 0,
   'ecash-send': 1,
   'lightning-send': 1,
-  'ecash-receive': 2,
-  'lightning-receive': 2,
+  'ecash-receive': 1,
+  'lightning-receive': 1,
 };
 
 function resolveDirection(
@@ -230,18 +234,27 @@ function resolveDirection(
 export function HomeScreen(props: HomeScreenProps) {
   const [view, setView] = useState<HomeView>('home');
   const viewRef = useRef<HomeView>('home');
-  const transitionTo = (next: HomeView) => {
+  const transitionTo = (
+    next: HomeView,
+    direction?: ViewTransitionDirection,
+  ) => {
     if (next === viewRef.current) {
       return;
     }
-    runViewTransition(resolveDirection(viewRef.current, next), () => {
-      viewRef.current = next;
-      setView(next);
-    });
+    runViewTransition(
+      direction ?? resolveDirection(viewRef.current, next),
+      () => {
+        viewRef.current = next;
+        setView(next);
+      },
+    );
   };
   const navigate = (rail: PaymentRail, direction: PaymentDirection) =>
     transitionTo(`${rail}-${direction}` as HomeView);
   const goHome = () => transitionTo('home');
+  // Returning home after a completed payment is a deliberate "close" moment, so
+  // the success card recedes and fades rather than doing a peer-screen push.
+  const goHomeDismiss = () => transitionTo('home', 'dismiss');
 
   switch (view) {
     case 'ecash-receive':
@@ -249,6 +262,7 @@ export function HomeScreen(props: HomeScreenProps) {
         <EcashReceiveScreen
           onNavigate={navigate}
           onHome={goHome}
+          onDone={goHomeDismiss}
           onParse={props.onParseEcash}
           onRedeem={props.onRedeemEcash}
         />
@@ -271,6 +285,7 @@ export function HomeScreen(props: HomeScreenProps) {
           operations={props.snapshot.operations}
           onNavigate={navigate}
           onHome={goHome}
+          onDone={goHomeDismiss}
           onCreate={props.onCreateLightningInvoice}
         />
       );
@@ -281,6 +296,7 @@ export function HomeScreen(props: HomeScreenProps) {
           operations={props.snapshot.operations}
           onNavigate={navigate}
           onHome={goHome}
+          onDone={goHomeDismiss}
           onQuote={props.onQuoteLightningPayment}
           onResolveLnurl={props.onResolveLnurlPay}
           onQuoteLnurl={props.onQuoteLnurlPayment}
@@ -445,9 +461,11 @@ function formatSignedAmount(
 function EcashReceiveScreen({
   onNavigate,
   onHome,
+  onDone,
   onParse,
   onRedeem,
 }: PaymentNavProps & {
+  onDone(): void;
   onParse(rawNotes: string): Promise<FeatureResult<EcashPreview>>;
   onRedeem(preview: EcashPreview): Promise<FeatureResult<TrackedOperation>>;
 }) {
@@ -474,9 +492,11 @@ function EcashReceiveScreen({
       setError(result.error);
       return;
     }
-    setManual('');
-    setShowManual(false);
-    setPreview(result.value);
+    runViewTransition('forward', () => {
+      setManual('');
+      setShowManual(false);
+      setPreview(result.value);
+    });
   }
 
   async function capture(value: string) {
@@ -523,7 +543,9 @@ function EcashReceiveScreen({
       setError(result.error);
       return;
     }
-    setOperation(result.value.operation);
+    // Redeem and Received share the same layout; a slow crossfade reads as the
+    // title and button changing while the icon and amount hold still.
+    runViewTransition('settle', () => setOperation(result.value.operation));
   }
 
   if (operation !== undefined) {
@@ -533,13 +555,14 @@ function EcashReceiveScreen({
         tone="success"
         direction="in"
         title="Received"
+        hold
         amountSats={
           operation.amountMsats === undefined
             ? undefined
             : formatMsatsAsSats(operation.amountMsats)
         }
       >
-        <button className="cta-pay" type="button" onClick={onHome}>
+        <button className="cta-pay" type="button" onClick={onDone}>
           <CheckIcon size={20} />
           Done
         </button>
@@ -557,10 +580,10 @@ function EcashReceiveScreen({
         amountSats={formatMsatsAsSats(preview.amountMsats)}
         subtitle={
           preview.compatible
-            ? 'Compatible with your federation'
+            ? undefined
             : "Different federation — can't redeem here"
         }
-        onBack={() => setPreview(undefined)}
+        onBack={() => runViewTransition('back', () => setPreview(undefined))}
         error={error}
       >
         <button
@@ -642,6 +665,7 @@ function EcashSendScreen({
   onCreate(amountSats: string): Promise<FeatureResult<EcashExport>>;
 }) {
   const [amount, setAmount] = useState('');
+  const [confirming, setConfirming] = useState(false);
   const [sentAmount, setSentAmount] = useState<string>();
   const [exported, setExported] = useState<EcashExport>();
   const [busy, setBusy] = useState(false);
@@ -656,6 +680,16 @@ function EcashSendScreen({
     [exported],
   );
 
+  // The check key on the keypad commits the amount and moves to a review step;
+  // the link is only minted once "Create link" is pressed on that screen.
+  function review() {
+    if (!ready) {
+      return;
+    }
+    setError(undefined);
+    runViewTransition('forward', () => setConfirming(true));
+  }
+
   async function create() {
     setBusy(true);
     setError(undefined);
@@ -668,6 +702,7 @@ function EcashSendScreen({
     runViewTransition('forward', () => {
       setSentAmount(amount);
       setExported(result.value);
+      setConfirming(false);
       setAmount('');
     });
   }
@@ -734,6 +769,43 @@ function EcashSendScreen({
     );
   }
 
+  if (confirming) {
+    return (
+      <ResultScreen
+        titleId="ecash-send-title"
+        tone="success"
+        direction="out"
+        title="Send"
+        amountSats={amount}
+        error={error}
+        onBack={
+          busy
+            ? undefined
+            : () => runViewTransition('back', () => setConfirming(false))
+        }
+      >
+        <button
+          className="cta-pay"
+          type="button"
+          disabled={busy}
+          aria-busy={busy}
+          onClick={() => void create()}
+        >
+          {busy ? (
+            <span className="pending-dots" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </span>
+          ) : (
+            <LinkIcon size={20} />
+          )}
+          {busy ? 'Creating…' : 'Create link'}
+        </button>
+      </ResultScreen>
+    );
+  }
+
   return (
     <SendReceiveShell
       rail="ecash"
@@ -742,17 +814,14 @@ function EcashSendScreen({
       onNavigate={onNavigate}
       onHome={onHome}
     >
-      <AmountKeypad value={amount} onChange={setAmount} disabled={busy} />
+      <AmountKeypad
+        value={amount}
+        onChange={setAmount}
+        onConfirm={review}
+        confirmDisabled={!ready}
+        confirmLabel="Review send"
+      />
       <ScreenError message={error} />
-      <button
-        className="cta-send"
-        type="button"
-        disabled={!ready || busy}
-        onClick={() => void create()}
-      >
-        <LinkIcon size={20} />
-        {busy ? 'Generating…' : 'Create link'}
-      </button>
     </SendReceiveShell>
   );
 }
@@ -762,10 +831,12 @@ function LightningReceiveScreen({
   operations,
   onNavigate,
   onHome,
+  onDone,
   onCreate,
 }: PaymentNavProps & {
   enabled: boolean;
   operations: readonly WalletOperation[];
+  onDone(): void;
   onCreate(
     amountSats: string,
     description: string,
@@ -868,17 +939,16 @@ function LightningReceiveScreen({
         onNavigate={onNavigate}
         onHome={onHome}
       >
-        <AmountKeypad value={amount} onChange={setAmount} disabled={busy} />
+        <AmountKeypad
+          value={amount}
+          onChange={setAmount}
+          disabled={busy}
+          onConfirm={() => void create()}
+          confirmDisabled={!ready || busy}
+          confirmLabel="Create invoice"
+          confirmBusy={busy}
+        />
         <ScreenError message={error} />
-        <button
-          className="cta-send"
-          type="button"
-          disabled={!ready || busy}
-          onClick={() => void create()}
-        >
-          <BoltIcon size={20} />
-          {busy ? 'Creating…' : 'Create invoice'}
-        </button>
       </SendReceiveShell>
     );
   }
@@ -898,7 +968,7 @@ function LightningReceiveScreen({
             : formatMsatsAsSats(displayOperation.amountMsats)
         }
       >
-        <button className="cta-pay" type="button" onClick={onHome}>
+        <button className="cta-pay" type="button" onClick={onDone}>
           <CheckIcon size={20} />
           Done
         </button>
@@ -981,6 +1051,7 @@ function LightningSendScreen({
   operations,
   onNavigate,
   onHome,
+  onDone,
   onQuote,
   onResolveLnurl,
   onQuoteLnurl,
@@ -988,6 +1059,7 @@ function LightningSendScreen({
 }: PaymentNavProps & {
   enabled: boolean;
   operations: readonly WalletOperation[];
+  onDone(): void;
   onQuote(
     invoice: string,
     maximumFeeSats: string,
@@ -1018,11 +1090,31 @@ function LightningSendScreen({
     successAction?: LnurlSuccessAction;
   }>();
   const [operation, setOperation] = useState<WalletOperation>();
+  const [revealResult, setRevealResult] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const manualInputRef = useRef<HTMLTextAreaElement>(null);
   const nowMs = useCurrentTime(review !== undefined);
   const feeLimitSats = '10';
+
+  // While a submitted payment is still in flight we stay on the review screen
+  // with the Pay button animating, rather than showing a separate "pending"
+  // screen. The result screen appears only once the operation is terminal, and
+  // we flip into it inside a view transition so the review screen slides out.
+  const liveOperation =
+    operation === undefined
+      ? undefined
+      : (findOperation(operations, operation.key) ?? operation);
+  const operationTerminal =
+    liveOperation !== undefined &&
+    isTerminalOperationStatus(liveOperation.status);
+  const paying = operation !== undefined && !revealResult;
+
+  useEffect(() => {
+    if (operationTerminal && !revealResult) {
+      runViewTransition('forward', () => setRevealResult(true));
+    }
+  }, [operationTerminal, revealResult]);
 
   useEffect(() => {
     if (showManual) {
@@ -1039,9 +1131,11 @@ function LightningSendScreen({
       setError(result.error);
       return;
     }
-    setManual('');
-    setShowManual(false);
-    setReview(result.value);
+    runViewTransition('forward', () => {
+      setManual('');
+      setShowManual(false);
+      setReview(result.value);
+    });
   }
 
   async function resolveLnurl(input: string) {
@@ -1053,10 +1147,12 @@ function LightningSendScreen({
       setError(result.error);
       return;
     }
-    setManual('');
-    setShowManual(false);
-    setAmount('');
-    setOffer(result.value);
+    runViewTransition('forward', () => {
+      setManual('');
+      setShowManual(false);
+      setAmount('');
+      setOffer(result.value);
+    });
   }
 
   async function submitPaymentTarget(value: string) {
@@ -1102,7 +1198,7 @@ function LightningSendScreen({
       setError(result.error);
       return;
     }
-    setReview(result.value);
+    runViewTransition('forward', () => setReview(result.value));
   }
 
   async function pasteFromClipboard() {
@@ -1132,6 +1228,8 @@ function LightningSendScreen({
       setError(result.error);
       return;
     }
+    // Keep the user on the review screen with the Pay button animating; the
+    // settle-watching effect promotes this to the result screen once terminal.
     setOperation(result.value.operation);
   }
 
@@ -1162,35 +1260,24 @@ function LightningSendScreen({
     );
   }
 
-  if (operation !== undefined) {
-    const liveOperation = findOperation(operations, operation.key) ?? operation;
+  if (revealResult && liveOperation !== undefined) {
     const settled = liveOperation.status === 'settled';
-    const unsuccessful =
-      isTerminalOperationStatus(liveOperation.status) && !settled;
     const successAction = settled ? review?.successAction : undefined;
     return (
       <ResultScreen
         titleId="lightning-send-title"
         tone={settled ? 'success' : 'pending'}
         direction="out"
-        title={
-          settled
-            ? 'Sent'
-            : unsuccessful
-              ? 'Payment not completed'
-              : 'Payment pending'
-        }
+        title={settled ? 'Sent' : 'Payment not completed'}
         amountSats={
           liveOperation.amountMsats === undefined
             ? undefined
             : formatMsatsAsSats(liveOperation.amountMsats)
         }
         subtitle={
-          unsuccessful
-            ? 'Review Activity before trying this payment again.'
-            : settled
-              ? undefined
-              : 'Waiting for the Lightning payment to settle.'
+          settled
+            ? undefined
+            : 'Review Activity before trying this payment again.'
         }
       >
         {successAction?.tag === 'message' && (
@@ -1209,7 +1296,7 @@ function LightningSendScreen({
             </p>
           </div>
         )}
-        <button className="cta-pay" type="button" onClick={onHome}>
+        <button className="cta-pay" type="button" onClick={onDone}>
           <CheckIcon size={20} />
           Done
         </button>
@@ -1233,11 +1320,13 @@ function LightningSendScreen({
             type="button"
             aria-label="Back"
             disabled={busy}
-            onClick={() => {
-              setOffer(undefined);
-              setAmount('');
-              setError(undefined);
-            }}
+            onClick={() =>
+              runViewTransition('back', () => {
+                setOffer(undefined);
+                setAmount('');
+                setError(undefined);
+              })
+            }
           >
             <ChevronLeftIcon />
           </button>
@@ -1291,11 +1380,13 @@ function LightningSendScreen({
             className="confirm-back"
             type="button"
             aria-label="Back"
-            disabled={busy}
-            onClick={() => {
-              setReview(undefined);
-              setError(undefined);
-            }}
+            disabled={busy || paying}
+            onClick={() =>
+              runViewTransition('back', () => {
+                setReview(undefined);
+                setError(undefined);
+              })
+            }
           >
             <ChevronLeftIcon />
           </button>
@@ -1342,16 +1433,18 @@ function LightningSendScreen({
         <button
           className="cta-pay"
           type="button"
-          disabled={busy}
+          disabled={busy || paying}
+          aria-busy={busy || paying}
           onClick={() => void pay()}
         >
           <BoltIcon size={20} />
-          {busy ? (
-            'Submitting…'
-          ) : (
-            <>
-              Pay <BitcoinMark className="btc-symbol" /> {amountLabel}
-            </>
+          Pay <BitcoinMark className="btc-symbol" /> {amountLabel}
+          {(busy || paying) && (
+            <span className="pending-dots" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </span>
           )}
         </button>
       </section>
@@ -1870,7 +1963,10 @@ function SettingsScreen({
   }
 
   return (
-    <section className="page-shell" aria-labelledby="settings-title">
+    <section
+      className="page-shell settings-shell"
+      aria-labelledby="settings-title"
+    >
       <div className="page-topbar">
         <ChatTopbarSlot onOpenChat={onOpenChat} />
         <button
