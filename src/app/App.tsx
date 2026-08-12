@@ -46,6 +46,8 @@ const DISPOSABLE_TEST_PASSPHRASE = 'disposable-fedimint-browser-test-wallet';
 
 export function WalletApp(dependencies: WalletAppProps) {
   const [controller] = useState(() => new WalletAppController(dependencies));
+  const [onboardingTransitionPending, setOnboardingTransitionPending] =
+    useState(false);
   const pendingOnboardingTransition = useRef<
     ViewTransitionDirection | undefined
   >(undefined);
@@ -70,6 +72,7 @@ export function WalletApp(dependencies: WalletAppProps) {
         }
 
         pendingOnboardingTransition.current = undefined;
+        setOnboardingTransitionPending(false);
         runViewTransition(direction, listener);
       });
     },
@@ -94,11 +97,13 @@ export function WalletApp(dependencies: WalletAppProps) {
     update: () => Promise<void>,
   ): Promise<void> {
     pendingOnboardingTransition.current = direction;
+    setOnboardingTransitionPending(true);
     try {
       await update();
     } finally {
       if (pendingOnboardingTransition.current === direction) {
         pendingOnboardingTransition.current = undefined;
+        setOnboardingTransitionPending(false);
       }
     }
   }
@@ -174,8 +179,7 @@ export function WalletApp(dependencies: WalletAppProps) {
     state.phase === 'unsupported';
   const isOnboardingTransitionPhase =
     isOnboardingPhase ||
-    (state.phase === 'opening' &&
-      pendingOnboardingTransition.current !== undefined);
+    (state.phase === 'opening' && onboardingTransitionPending);
 
   let content;
   switch (state.phase) {

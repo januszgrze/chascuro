@@ -904,6 +904,7 @@ describe('WalletAppController feature safety', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(screen.getByRole('button', { name: 'Ecash' }));
     await user.click(screen.getByRole('button', { name: '1' }));
+    await user.click(screen.getByRole('button', { name: 'Review send' }));
     await user.click(screen.getByRole('button', { name: 'Create link' }));
 
     expect(
