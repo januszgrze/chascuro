@@ -863,7 +863,6 @@ describe('WalletAppController feature safety', () => {
     render(
       <HomeScreen
         snapshot={state.walletSnapshot}
-        securitySettings={state.securitySettings}
         refreshing={false}
         error={state.error}
         onRefresh={() => harness.controller.refreshBalance()}
@@ -897,12 +896,6 @@ describe('WalletAppController feature safety', () => {
         }
         onRecoverLightningInvoice={(key) =>
           harness.controller.recoverLightningInvoice(key)
-        }
-        onUpdateSecuritySettings={(inactivityTimeoutMs, backgroundTimeoutMs) =>
-          harness.controller.updateSecuritySettings(
-            inactivityTimeoutMs,
-            backgroundTimeoutMs,
-          )
         }
         onErase={(confirmation) => harness.controller.eraseWallet(confirmation)}
       />,

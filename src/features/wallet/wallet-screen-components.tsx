@@ -225,15 +225,25 @@ export function CopyButton({
 export function SettingsRow({
   icon,
   label,
+  open,
+  onToggle,
   children,
 }: {
   icon: ReactNode;
   label: string;
+  open: boolean;
+  onToggle(): void;
   children: ReactNode;
 }) {
   return (
-    <details className="settings-row">
-      <summary className="settings-summary">
+    <details className="settings-row" open={open}>
+      <summary
+        className="settings-summary"
+        onClick={(event) => {
+          event.preventDefault();
+          onToggle();
+        }}
+      >
         <span className="settings-row-icon">{icon}</span>
         <span className="settings-row-label">{label}</span>
         <span className="settings-chevron">

@@ -162,7 +162,7 @@
 }
 
 .sr-shell--dark .sr-toggle-btn.is-active {
-  color: var(--color-accent);
+  color: var(--color-on-primary);
 }
 
 .sr-toggle-indicator {
@@ -178,7 +178,7 @@
 }
 
 .sr-shell--dark .sr-toggle-indicator {
-  border: 1.5px solid var(--color-accent);
+  background: var(--color-primary);
 }
 
 .sr-toggle-icon {
@@ -187,6 +187,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.sr-toggle-icon--lightning {
+  view-transition-name: wallet-rail-lightning-icon;
+}
+
+.sr-toggle-icon--ecash {
+  view-transition-name: wallet-rail-ecash-icon;
 }
 
 .sr-body {
@@ -328,6 +336,11 @@
   padding: 158px 24px 0;
 }
 
+.scan-body--manual {
+  gap: 10px;
+  padding-top: 32px;
+}
+
 .scan-frame {
   display: flex;
   flex-direction: column;
@@ -383,8 +396,9 @@
 .scan-manual {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
   width: 100%;
+  view-transition-name: wallet-manual-entry;
 }
 
 .scan-manual textarea {
@@ -1906,6 +1920,7 @@ p {
 
 .settings-shell {
   min-height: 0;
+  color: var(--color-ink);
 }
 
 .settings-shell .settings-list {
@@ -1917,6 +1932,10 @@ p {
 
 .settings-row {
   border-bottom: 1px solid var(--color-line);
+}
+
+.settings-row[open] {
+  background: color-mix(in srgb, var(--color-surface) 22%, transparent);
 }
 
 .settings-summary {
@@ -1967,19 +1986,133 @@ p {
 .settings-panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 0 20px 20px 84px;
+  gap: 16px;
+  padding: 4px 20px 24px;
+  animation: settings-panel-in 180ms ease-out both;
 }
 
-.settings-panel-title {
+.settings-panel > .details-list,
+.settings-panel > .notice,
+.settings-panel > .word-grid,
+.settings-panel > .secondary-button {
+  width: 100%;
   margin: 0;
+}
+
+.settings-panel > .secondary-button {
+  flex-shrink: 0;
+}
+
+.settings-panel .details-list dd,
+.settings-panel .notice,
+.settings-panel .word-text,
+.settings-panel .settings-field {
+  color: var(--color-ink);
+}
+
+.settings-panel .fine-print {
+  margin: 0;
+}
+
+.settings-seed-warning {
+  width: 100%;
+  margin: 0;
+}
+
+.settings-word-grid {
+  padding: var(--space-2) 18px;
+}
+
+.settings-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  color: var(--color-ink);
   font-size: var(--text-label);
   font-weight: var(--font-weight-semibold);
-  color: var(--color-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
 }
 
-.settings-save {
-  margin: 16px 20px 0;
+.settings-field > span:first-child {
+  color: var(--color-muted);
+}
+
+.settings-field input {
+  width: 100%;
+  min-height: 52px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  outline: none;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+}
+
+.settings-field input:focus-visible {
+  border-color: var(--color-ink);
+  box-shadow: 0 0 0 2px rgba(243, 239, 228, 0.14);
+}
+
+.settings-danger {
+  display: grid;
+  gap: 16px;
+}
+
+.settings-danger-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--color-warn-wash);
+}
+
+.settings-danger-warning > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--color-warn-stroke);
+}
+
+.settings-danger-warning h2 {
+  margin: 0 0 5px;
+  color: var(--color-warn-ink);
+  font-size: var(--text-body);
+  line-height: 20px;
+}
+
+.settings-danger-warning p {
+  margin: 0;
+  color: var(--color-warn-ink);
+  font-size: var(--text-label);
+  line-height: 18px;
+}
+
+.settings-danger-action {
+  width: 100%;
+  min-height: 52px;
+  padding: 16px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-warn-wash);
+  color: var(--color-warn-ink);
+  font-weight: var(--font-weight-bold);
+}
+
+@keyframes settings-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-panel {
+    animation: none;
+  }
 }

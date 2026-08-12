@@ -379,7 +379,6 @@ export function WalletApp(dependencies: WalletAppProps) {
           }
           autoFocusChat={restoreChatFocus}
           snapshot={state.walletSnapshot}
-          securitySettings={state.securitySettings}
           refreshing={state.busy === 'refresh'}
           error={state.error}
           onRefresh={() => controller.refreshBalance()}
@@ -407,15 +406,6 @@ export function WalletApp(dependencies: WalletAppProps) {
           onRecoverEcashExport={(key) => controller.recoverEcashExport(key)}
           onRecoverLightningInvoice={(key) =>
             controller.recoverLightningInvoice(key)
-          }
-          onUpdateSecuritySettings={(
-            inactivityTimeoutMs,
-            backgroundTimeoutMs,
-          ) =>
-            controller.updateSecuritySettings(
-              inactivityTimeoutMs,
-              backgroundTimeoutMs,
-            )
           }
           onErase={async (typedConfirmation) => {
             const result = await controller.eraseWallet(typedConfirmation);

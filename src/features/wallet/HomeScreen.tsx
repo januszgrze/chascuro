@@ -20,7 +20,6 @@ import {
   type TrackedOperation,
   type WalletOperation,
 } from '../../domain';
-import type { WalletSecuritySettings } from '../../services/persistence/schemas/wallet-settings-record';
 import type { WalletSnapshot } from '../../services/wallet';
 import { AmountKeypad } from '../shared/AmountKeypad';
 import { BitcoinMark } from '../shared/BitcoinMark';
@@ -37,6 +36,7 @@ import {
   HistoryIcon,
   LinkIcon,
   PasteIcon,
+  WarningTriangleIcon,
 } from '../shared/icons';
 import { QrCode } from '../shared/QrCode';
 import { QrScanner } from '../shared/QrScanner';
@@ -65,17 +65,13 @@ import {
 } from './wallet-screen-components';
 import {
   ACTIVITY_PAGE_SIZE,
-  BACKGROUND_TIMEOUT_OPTIONS,
   findOperation,
   formatCountdown,
   formatOperationDirection,
   formatOperationStatus,
-  INACTIVITY_TIMEOUT_OPTIONS,
   isSecretRecoveryRelevant,
   lightningInvoiceUnavailableTitle,
   operationLabel,
-  parseTimeoutSelectValue,
-  timeoutSelectValue,
   useCurrentTime,
 } from './wallet-screen-helpers';
 
@@ -90,7 +86,6 @@ type FeatureResult<T> =
 
 interface HomeScreenProps {
   snapshot: WalletSnapshot;
-  securitySettings: WalletSecuritySettings;
   refreshing: boolean;
   error?: string;
   onRefresh(): Promise<void>;
@@ -131,10 +126,6 @@ interface HomeScreenProps {
   onRecoverLightningInvoice(
     key: OperationKey,
   ): Promise<FeatureResult<ClearableSecretText>>;
-  onUpdateSecuritySettings(
-    inactivityTimeoutMs: number | null,
-    backgroundTimeoutMs: number | null,
-  ): Promise<FeatureResult<WalletSecuritySettings>>;
   onErase(typedConfirmation: string): Promise<FeatureResult<void>>;
   onOpenChat?: () => void;
   autoFocusChat?: boolean;
@@ -318,10 +309,8 @@ export function HomeScreen(props: HomeScreenProps) {
       return (
         <SettingsScreen
           snapshot={props.snapshot}
-          securitySettings={props.securitySettings}
           onBack={goHome}
           onRevealMnemonic={props.onRevealMnemonic}
-          onUpdateSecuritySettings={props.onUpdateSecuritySettings}
           onErase={props.onErase}
           onLock={props.onLock}
           onOpenChat={props.onOpenChat}
@@ -483,6 +472,16 @@ function EcashReceiveScreen({
     }
   }, [showManual]);
 
+  function openManualEntry() {
+    if (!showManual) {
+      runViewTransition('lateral', () => setShowManual(true));
+    }
+  }
+
+  function toggleManualEntry() {
+    runViewTransition('lateral', () => setShowManual((current) => !current));
+  }
+
   async function runParse(input: string) {
     setError(undefined);
     setBusy(true);
@@ -518,7 +517,7 @@ function EcashReceiveScreen({
 
   async function pasteFromClipboard() {
     if (navigator.clipboard === undefined) {
-      setShowManual(true);
+      openManualEntry();
       return;
     }
     try {
@@ -527,7 +526,7 @@ function EcashReceiveScreen({
         await capture(text);
       }
     } catch {
-      setShowManual(true);
+      openManualEntry();
     }
   }
 
@@ -606,22 +605,18 @@ function EcashReceiveScreen({
       variant="dark"
       onNavigate={onNavigate}
       onHome={onHome}
-      onKeyboard={() => setShowManual((current) => !current)}
+      onKeyboard={toggleManualEntry}
+      hideNavigation={showManual}
     >
-      <div className="scan-body">
-        <QrScanner
-          variant="framed"
-          disabled={busy}
-          onScan={(value) => void capture(value)}
-        />
-        {showManual && (
+      <div className={`scan-body${showManual ? ' scan-body--manual' : ''}`}>
+        {showManual ? (
           <div className="scan-manual">
             <textarea
               ref={manualInputRef}
               aria-label="Ecash notes"
               autoComplete="off"
               spellCheck={false}
-              placeholder="Paste ecash note"
+              placeholder="Type in ecash note"
               value={manual}
               onChange={(event) => {
                 setError(undefined);
@@ -637,21 +632,29 @@ function EcashReceiveScreen({
               Continue
             </button>
           </div>
+        ) : (
+          <>
+            <QrScanner
+              variant="framed"
+              disabled={busy}
+              onScan={(value) => void capture(value)}
+            />
+            <button
+              className="scan-paste"
+              type="button"
+              disabled={busy}
+              onClick={() => void pasteFromClipboard()}
+            >
+              <PasteIcon />
+              Paste ecash note
+            </button>
+          </>
         )}
         {error !== undefined && (
           <p className="scan-error" role="alert">
             {error}
           </p>
         )}
-        <button
-          className="scan-paste"
-          type="button"
-          disabled={busy}
-          onClick={() => void pasteFromClipboard()}
-        >
-          <PasteIcon />
-          Paste ecash note
-        </button>
       </div>
     </SendReceiveShell>
   );
@@ -1122,6 +1125,16 @@ function LightningSendScreen({
     }
   }, [showManual]);
 
+  function openManualEntry() {
+    if (!showManual) {
+      runViewTransition('lateral', () => setShowManual(true));
+    }
+  }
+
+  function toggleManualEntry() {
+    runViewTransition('lateral', () => setShowManual((current) => !current));
+  }
+
   async function runQuote(input: string) {
     setError(undefined);
     setBusy(true);
@@ -1203,7 +1216,7 @@ function LightningSendScreen({
 
   async function pasteFromClipboard() {
     if (navigator.clipboard === undefined) {
-      setShowManual(true);
+      openManualEntry();
       return;
     }
     try {
@@ -1212,7 +1225,7 @@ function LightningSendScreen({
         await submitPaymentTarget(text);
       }
     } catch {
-      setShowManual(true);
+      openManualEntry();
     }
   }
 
@@ -1458,22 +1471,18 @@ function LightningSendScreen({
       variant="dark"
       onNavigate={onNavigate}
       onHome={onHome}
-      onKeyboard={() => setShowManual((current) => !current)}
+      onKeyboard={toggleManualEntry}
+      hideNavigation={showManual}
     >
-      <div className="scan-body">
-        <QrScanner
-          variant="framed"
-          disabled={busy}
-          onScan={(value) => void submitPaymentTarget(value)}
-        />
-        {showManual && (
+      <div className={`scan-body${showManual ? ' scan-body--manual' : ''}`}>
+        {showManual ? (
           <div className="scan-manual">
             <textarea
               ref={manualInputRef}
               aria-label="Lightning payment request"
               autoComplete="off"
               spellCheck={false}
-              placeholder="Paste payment URL"
+              placeholder="Type in payment URL"
               value={manual}
               onChange={(event) => {
                 setError(undefined);
@@ -1489,21 +1498,29 @@ function LightningSendScreen({
               Continue
             </button>
           </div>
+        ) : (
+          <>
+            <QrScanner
+              variant="framed"
+              disabled={busy}
+              onScan={(value) => void submitPaymentTarget(value)}
+            />
+            <button
+              className="scan-paste"
+              type="button"
+              disabled={busy}
+              onClick={() => void pasteFromClipboard()}
+            >
+              <PasteIcon />
+              Paste payment URL
+            </button>
+          </>
         )}
         {error !== undefined && (
           <p className="scan-error" role="alert">
             {error}
           </p>
         )}
-        <button
-          className="scan-paste"
-          type="button"
-          disabled={busy}
-          onClick={() => void pasteFromClipboard()}
-        >
-          <PasteIcon />
-          Paste payment URL
-        </button>
       </div>
     </SendReceiveShell>
   );
@@ -1879,40 +1896,29 @@ function TransactionDetailScreen({
 
 function SettingsScreen({
   snapshot,
-  securitySettings,
   onBack,
   onRevealMnemonic,
-  onUpdateSecuritySettings,
   onErase,
   onLock,
   onOpenChat,
 }: {
   snapshot: WalletSnapshot;
-  securitySettings: WalletSecuritySettings;
   onBack(): void;
   onRevealMnemonic(): Promise<FeatureResult<SecretMnemonic>>;
-  onUpdateSecuritySettings(
-    inactivityTimeoutMs: number | null,
-    backgroundTimeoutMs: number | null,
-  ): Promise<FeatureResult<WalletSecuritySettings>>;
   onErase(typedConfirmation: string): Promise<FeatureResult<void>>;
   onLock(): Promise<void>;
   onOpenChat?: () => void;
 }) {
+  type SettingsSection = 'wallet' | 'seed' | 'recovery';
+
   const [mnemonic, setMnemonic] = useState<SecretMnemonic>();
+  const [openSection, setOpenSection] = useState<SettingsSection>();
+  const openSectionRef = useRef<SettingsSection | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [eraseConfirmation, setEraseConfirmation] = useState('');
-  const [inactivityTimeoutMs, setInactivityTimeoutMs] = useState<number | null>(
-    securitySettings.inactivityTimeoutMs,
-  );
-  const [backgroundTimeoutMs, setBackgroundTimeoutMs] = useState<number | null>(
-    securitySettings.backgroundTimeoutMs,
-  );
-  const [settingsStatus, setSettingsStatus] = useState<string>();
   const words = mnemonic?.reveal() ?? [];
-  const automaticLockDisabled =
-    inactivityTimeoutMs === null && backgroundTimeoutMs === null;
+  const wordColumns = [words.slice(0, 6), words.slice(6)];
 
   useEffect(
     () => () => {
@@ -1921,6 +1927,10 @@ function SettingsScreen({
     [mnemonic],
   );
 
+  useEffect(() => {
+    openSectionRef.current = openSection;
+  }, [openSection]);
+
   async function reveal() {
     setBusy(true);
     setError(undefined);
@@ -1928,6 +1938,10 @@ function SettingsScreen({
     setBusy(false);
     if (!result.ok) {
       setError(result.error);
+      return;
+    }
+    if (openSectionRef.current !== 'seed') {
+      result.value.clear();
       return;
     }
     setMnemonic(result.value);
@@ -1943,23 +1957,12 @@ function SettingsScreen({
     }
   }
 
-  async function updateAutomaticLock() {
-    if (automaticLockDisabled) {
-      return;
+  function toggleSection(section: SettingsSection) {
+    if (openSection === 'seed') {
+      mnemonic?.clear();
+      setMnemonic(undefined);
     }
-    setBusy(true);
-    setError(undefined);
-    setSettingsStatus(undefined);
-    const result = await onUpdateSecuritySettings(
-      inactivityTimeoutMs,
-      backgroundTimeoutMs,
-    );
-    setBusy(false);
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
-    setSettingsStatus('Automatic lock settings saved.');
+    setOpenSection((current) => (current === section ? undefined : section));
   }
 
   return (
@@ -1982,7 +1985,12 @@ function SettingsScreen({
         Settings
       </h1>
       <div className="settings-list">
-        <SettingsRow icon={<WalletGlyph />} label="Wallet">
+        <SettingsRow
+          icon={<WalletGlyph />}
+          label="Wallet"
+          open={openSection === 'wallet'}
+          onToggle={() => toggleSection('wallet')}
+        >
           <dl className="details-list">
             <div>
               <dt>Federation</dt>
@@ -2001,7 +2009,12 @@ function SettingsScreen({
             Lock wallet
           </button>
         </SettingsRow>
-        <SettingsRow icon={<SeedGlyph />} label="Seed & PIN">
+        <SettingsRow
+          icon={<SeedGlyph />}
+          label="Seed & PIN"
+          open={openSection === 'seed'}
+          onToggle={() => toggleSection('seed')}
+        >
           {mnemonic === undefined ? (
             <button
               className="secondary-button"
@@ -2013,20 +2026,33 @@ function SettingsScreen({
             </button>
           ) : (
             <>
-              <div className="notice">
-                <strong>Private recovery material</strong>
+              <div className="warn-banner settings-seed-warning">
+                <WarningTriangleIcon />
                 <p>
-                  Hide these words before handing the device to anyone else.
+                  Write these down in order. Anyone with them can take your
+                  money — Chascuro can't recover them.
                 </p>
               </div>
-              <ol className="mnemonic-grid">
-                {words.map((word, index) => (
-                  <li key={`${index}-${word}`}>
-                    <span>{index + 1}</span>
-                    <strong>{word}</strong>
-                  </li>
+              <div className="word-grid settings-word-grid">
+                {wordColumns.map((column, columnIndex) => (
+                  <ol
+                    className="word-col"
+                    key={columnIndex}
+                    start={columnIndex * 6 + 1}
+                    aria-label={`Recovery words ${columnIndex * 6 + 1} to ${columnIndex * 6 + column.length}`}
+                  >
+                    {column.map((word, wordIndex) => {
+                      const position = columnIndex * 6 + wordIndex + 1;
+                      return (
+                        <li className="word-row" key={`${position}-${word}`}>
+                          <span className="word-num">{position}</span>
+                          <span className="word-text">{word}</span>
+                        </li>
+                      );
+                    })}
+                  </ol>
                 ))}
-              </ol>
+              </div>
               <button
                 className="secondary-button"
                 type="button"
@@ -2040,86 +2066,26 @@ function SettingsScreen({
             </>
           )}
         </SettingsRow>
-        <SettingsRow icon={<LinkIcon size={22} />} label="Network">
-          <dl className="details-list">
-            <div>
-              <dt>Network</dt>
-              <dd>{snapshot.activeFederation?.network ?? 'unknown'}</dd>
+        <SettingsRow
+          icon={<RecoveryGlyph />}
+          label="Wallet Recovery"
+          open={openSection === 'recovery'}
+          onToggle={() => toggleSection('recovery')}
+        >
+          <div className="settings-danger">
+            <div className="settings-danger-warning">
+              <WarningTriangleIcon />
+              <div>
+                <h2>Erase this device</h2>
+                <p>
+                  This removes app records, the verified SDK database file,
+                  caches, and service workers. It cannot revoke ecash already
+                  exported.
+                </p>
+              </div>
             </div>
-            <div>
-              <dt>Recovery</dt>
-              <dd>{snapshot.capabilities?.recovery ?? 'unknown'}</dd>
-            </div>
-          </dl>
-        </SettingsRow>
-        <SettingsRow icon={<GearIcon size={22} />} label="Advanced">
-          <div className="stack" aria-labelledby="automatic-lock-title">
-            <h2 id="automatic-lock-title" className="settings-panel-title">
-              Automatic lock
-            </h2>
-            <label>
-              Lock after inactivity
-              <select
-                value={timeoutSelectValue(inactivityTimeoutMs)}
-                onChange={(event) => {
-                  setInactivityTimeoutMs(
-                    parseTimeoutSelectValue(event.target.value),
-                  );
-                  setSettingsStatus(undefined);
-                }}
-              >
-                {INACTIVITY_TIMEOUT_OPTIONS.map((option) => (
-                  <option
-                    key={option.label}
-                    value={timeoutSelectValue(option.ms)}
-                  >
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Lock while in background
-              <select
-                value={timeoutSelectValue(backgroundTimeoutMs)}
-                onChange={(event) => {
-                  setBackgroundTimeoutMs(
-                    parseTimeoutSelectValue(event.target.value),
-                  );
-                  setSettingsStatus(undefined);
-                }}
-              >
-                {BACKGROUND_TIMEOUT_OPTIONS.map((option) => (
-                  <option
-                    key={option.label}
-                    value={timeoutSelectValue(option.ms)}
-                  >
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {automaticLockDisabled && (
-              <p className="fine-print" role="alert">
-                At least one automatic lock must remain enabled.
-              </p>
-            )}
-            {settingsStatus !== undefined && (
-              <p className="fine-print" role="status">
-                {settingsStatus}
-              </p>
-            )}
-          </div>
-        </SettingsRow>
-        <SettingsRow icon={<RecoveryGlyph />} label="Wallet Recovery">
-          <div className="danger-zone">
-            <h2>Erase this device</h2>
-            <p className="fine-print">
-              This removes app records, the verified SDK database file, caches,
-              and service workers. It cannot revoke ecash already exported.
-            </p>
-            <label>
-              Type ERASE
+            <label className="settings-field">
+              <span>Type ERASE to confirm</span>
               <input
                 autoComplete="off"
                 value={eraseConfirmation}
@@ -2127,7 +2093,7 @@ function SettingsScreen({
               />
             </label>
             <button
-              className="secondary-button"
+              className="settings-danger-action"
               type="button"
               disabled={busy || eraseConfirmation !== 'ERASE'}
               onClick={() => void erase()}
@@ -2138,14 +2104,6 @@ function SettingsScreen({
         </SettingsRow>
       </div>
       <ScreenError message={error} />
-      <button
-        className="cta-pill settings-save"
-        type="button"
-        disabled={busy || automaticLockDisabled}
-        onClick={() => void updateAutomaticLock()}
-      >
-        {busy ? 'Saving…' : 'Save Settings'}
-      </button>
     </section>
   );
 }

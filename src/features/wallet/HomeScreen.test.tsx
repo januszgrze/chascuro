@@ -19,6 +19,7 @@ import {
   paymentFingerprint,
   quoteId,
   satsToMsats,
+  secretMnemonic,
   secretRecordRef,
   type OperationDirection,
   type OperationGuidanceCode,
@@ -68,11 +69,6 @@ type HomeProps = ComponentProps<typeof HomeScreen>;
 function createHomeProps(overrides: Partial<HomeProps> = {}): HomeProps {
   return {
     snapshot: SNAPSHOT,
-    securitySettings: {
-      version: 1,
-      inactivityTimeoutMs: 5 * 60_000,
-      backgroundTimeoutMs: 30_000,
-    },
     refreshing: false,
     onRefresh: vi.fn(async () => undefined),
     onLock: vi.fn(async () => undefined),
@@ -108,9 +104,6 @@ function createHomeProps(overrides: Partial<HomeProps> = {}): HomeProps {
       .fn()
       .mockResolvedValue({ ok: false, error: 'Unavailable.' }),
     onRecoverLightningInvoice: vi
-      .fn()
-      .mockResolvedValue({ ok: false, error: 'Unavailable.' }),
-    onUpdateSecuritySettings: vi
       .fn()
       .mockResolvedValue({ ok: false, error: 'Unavailable.' }),
     onErase: vi.fn().mockResolvedValue({ ok: false, error: 'Unavailable.' }),
@@ -196,9 +189,26 @@ describe('HomeScreen scanned wallet input', () => {
 
     await user.click(screen.getByRole('button', { name: 'Enter manually' }));
     expect(screen.getByLabelText('Ecash notes')).toHaveFocus();
+    expect(screen.getByPlaceholderText('Type in ecash note')).toBeVisible();
+    expect(
+      screen.queryByRole('navigation', { name: 'Wallet navigation' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Scan test QR' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Paste ecash note' }),
+    ).not.toBeInTheDocument();
     await user.type(screen.getByLabelText('Ecash notes'), 'manual ecash notes');
     await user.click(screen.getByRole('button', { name: 'Continue' }));
     expect(onParseEcash).toHaveBeenCalledWith('manual ecash notes');
+
+    await user.click(screen.getByRole('button', { name: 'Enter manually' }));
+    expect(screen.queryByLabelText('Ecash notes')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('navigation', { name: 'Wallet navigation' }),
+    ).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Scan test QR' })).toBeVisible();
   });
 
   it('rejects unrelated scans and auto-quotes (never auto-pays) a BOLT11 invoice', async () => {
@@ -225,6 +235,16 @@ describe('HomeScreen scanned wallet input', () => {
 
     await user.click(screen.getByRole('button', { name: 'Enter manually' }));
     expect(screen.getByLabelText('Lightning payment request')).toHaveFocus();
+    expect(screen.getByPlaceholderText('Type in payment URL')).toBeVisible();
+    expect(
+      screen.queryByRole('navigation', { name: 'Wallet navigation' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Scan test QR' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Paste payment URL' }),
+    ).not.toBeInTheDocument();
     await user.type(
       screen.getByLabelText('Lightning payment request'),
       'lntb1manualinvoice',
@@ -234,6 +254,15 @@ describe('HomeScreen scanned wallet input', () => {
       'lntb1manualinvoice',
       '10',
     );
+
+    await user.click(screen.getByRole('button', { name: 'Enter manually' }));
+    expect(
+      screen.queryByLabelText('Lightning payment request'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('navigation', { name: 'Wallet navigation' }),
+    ).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Scan test QR' })).toBeVisible();
   });
 
   it('resolves a Lightning Address, validates a chosen amount, and quotes before payment', async () => {
@@ -760,42 +789,88 @@ describe('HomeScreen activity', () => {
 });
 
 describe('HomeScreen settings and secret-storage warnings', () => {
-  it('requires at least one automatic lock and saves supported choices', async () => {
+  it('shows recovery words in the onboarding layout and clears them on section close', async () => {
     const user = userEvent.setup();
-    const onUpdateSecuritySettings = vi.fn().mockResolvedValue({
-      ok: true,
-      value: {
-        version: 1,
-        inactivityTimeoutMs: null,
-        backgroundTimeoutMs: 30_000,
-      },
+    const mnemonic = secretMnemonic([
+      'gravity',
+      'ocean',
+      'pigeon',
+      'thunder',
+      'velvet',
+      'cactus',
+      'ridge',
+      'salmon',
+      'hollow',
+      'jungle',
+      'marble',
+      'tornado',
+    ]);
+    renderHome({
+      onRevealMnemonic: vi.fn().mockResolvedValue({
+        ok: true,
+        value: mnemonic,
+      }),
     });
-    renderHome({ onUpdateSecuritySettings });
 
     await user.click(
       screen.getByRole('button', { name: 'Backup and settings' }),
     );
-    await user.click(screen.getByText('Advanced'));
-    await user.selectOptions(
-      screen.getByLabelText('Lock after inactivity'),
-      'never',
-    );
-    await user.click(screen.getByRole('button', { name: 'Save Settings' }));
-    expect(onUpdateSecuritySettings).toHaveBeenCalledWith(null, 30_000);
     expect(
-      await screen.findByText('Automatic lock settings saved.'),
+      screen.queryByText('Network', { selector: '.settings-row-label' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Advanced', { selector: '.settings-row-label' }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByText('Seed & PIN'));
+    await user.click(
+      screen.getByRole('button', { name: 'Reveal recovery words' }),
+    );
+
+    expect(screen.getByText('gravity')).toBeVisible();
+    expect(screen.getByText('tornado')).toBeVisible();
+    expect(
+      screen.getByText(/Anyone with them can take your money/),
     ).toBeVisible();
 
-    await user.selectOptions(
-      screen.getByLabelText('Lock while in background'),
-      'never',
+    await user.click(
+      screen.getByText('Wallet', { selector: '.settings-row-label' }),
     );
-    expect(
-      screen.getByText('At least one automatic lock must remain enabled.'),
-    ).toBeVisible();
-    expect(
-      screen.getByRole('button', { name: 'Save Settings' }),
-    ).toBeDisabled();
+
+    expect(screen.queryByText('gravity')).not.toBeInTheDocument();
+    expect(() => mnemonic.reveal()).toThrow();
+    expect(screen.getByText('Federation', { selector: 'dt' })).toBeVisible();
+  });
+
+  it('clears a recovery phrase that arrives after the seed section closes', async () => {
+    const user = userEvent.setup();
+    const mnemonic = secretMnemonic(
+      Array.from({ length: 12 }, () => 'abandon'),
+    );
+    let finishReveal:
+      ((result: { ok: true; value: typeof mnemonic }) => void) | undefined;
+    const onRevealMnemonic = vi.fn(
+      () =>
+        new Promise<{ ok: true; value: typeof mnemonic }>((resolve) => {
+          finishReveal = resolve;
+        }),
+    );
+    renderHome({ onRevealMnemonic });
+
+    await user.click(
+      screen.getByRole('button', { name: 'Backup and settings' }),
+    );
+    await user.click(screen.getByText('Seed & PIN'));
+    await user.click(
+      screen.getByRole('button', { name: 'Reveal recovery words' }),
+    );
+    await user.click(
+      screen.getByText('Wallet', { selector: '.settings-row-label' }),
+    );
+
+    await act(async () => finishReveal?.({ ok: true, value: mnemonic }));
+
+    await waitFor(() => expect(() => mnemonic.reveal()).toThrow());
+    expect(screen.queryByText('abandon')).not.toBeInTheDocument();
   });
 
   it('warns when bearer ecash exists only in memory', async () => {

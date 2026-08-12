@@ -344,9 +344,30 @@ textarea {
 ::view-transition-group(wallet-nav),
 ::view-transition-group(wallet-brand),
 ::view-transition-group(wallet-nav-active),
-::view-transition-group(wallet-rail-active) {
+::view-transition-group(wallet-rail-active),
+::view-transition-group(wallet-rail-lightning-icon),
+::view-transition-group(wallet-rail-ecash-icon) {
   animation-duration: 288ms;
   animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+::view-transition-group(wallet-rail-active) {
+  z-index: 1;
+}
+
+::view-transition-group(wallet-rail-lightning-icon),
+::view-transition-group(wallet-rail-ecash-icon) {
+  z-index: 2;
+}
+
+::view-transition-old(wallet-manual-entry) {
+  animation: wallet-manual-entry-out 180ms ease-in both;
+  mix-blend-mode: normal;
+}
+
+::view-transition-new(wallet-manual-entry) {
+  animation: wallet-manual-entry-in 240ms cubic-bezier(0.23, 1, 0.32, 1) both;
+  mix-blend-mode: normal;
 }
 
 ::view-transition-image-pair(root),
@@ -610,6 +631,30 @@ textarea {
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+@keyframes wallet-manual-entry-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes wallet-manual-entry-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(6px);
   }
 }
 
