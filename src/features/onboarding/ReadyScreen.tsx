@@ -1,4 +1,5 @@
 import { CheckIcon } from '../shared/icons';
+import { SoftwareDisclaimer } from './SoftwareDisclaimer';
 
 interface ReadyScreenProps {
   onContinue(): void;
@@ -13,6 +14,7 @@ export function ReadyScreen({ onContinue, onAddFederation }: ReadyScreenProps) {
           <CheckIcon />
         </div>
         <h1 id="ready-title">You're ready</h1>
+        <SoftwareDisclaimer />
       </div>
       <div className="onb-ready-footer">
         {onAddFederation !== undefined && (

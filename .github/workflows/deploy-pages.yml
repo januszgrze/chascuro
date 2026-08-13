@@ -1,0 +1,82 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Setup Rust
+        run: rustup toolchain install 1.90.0 --profile minimal --target wasm32-unknown-unknown,wasm32-wasip1
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: runtime/marmot-web
+
+      - name: Install wasm-pack and wasm-bindgen
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack@0.13.1,wasm-bindgen@0.2.126
+
+      - name: Install WASI sysroot
+        run: |
+          curl -fsSL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sysroot-25.0.tar.gz | tar -xz -C "$RUNNER_TEMP"
+          echo "WASI_SYSROOT=$RUNNER_TEMP/wasi-sysroot-25.0" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Marmot WASM runtime
+        run: npm run build:marmot-wasm
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Build
+        run: npm run build
+        env:
+          # base_path is "/<repo>" for project sites and "" for user sites;
+          # the trailing slash is required by the Vite base configuration.
+          VITE_BASE_PATH: ${{ steps.pages.outputs.base_path }}/
+
+      - name: Add SPA fallback
+        run: cp dist/index.html dist/404.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
