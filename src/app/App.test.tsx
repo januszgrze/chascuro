@@ -455,6 +455,9 @@ describe('WalletApp federation flow', () => {
     await harness.user.click(screen.getByRole('button', { name: 'Ecash' }));
     await harness.user.click(screen.getByRole('button', { name: '5' }));
     await harness.user.click(
+      screen.getByRole('button', { name: 'Review send' }),
+    );
+    await harness.user.click(
       screen.getByRole('button', { name: 'Create link' }),
     );
 
@@ -481,12 +484,16 @@ describe('WalletApp federation flow', () => {
     await harness.user.click(
       screen.getByRole('button', { name: 'Backup and settings' }),
     );
+    await harness.user.click(screen.getByText('Wallet Recovery'));
 
     const eraseButton = screen.getByRole('button', {
       name: 'Erase wallet data',
     });
     expect(eraseButton).toBeDisabled();
-    await harness.user.type(screen.getByLabelText('Type ERASE'), 'ERASE');
+    await harness.user.type(
+      screen.getByLabelText('Type ERASE to confirm'),
+      'ERASE',
+    );
     expect(eraseButton).toBeEnabled();
     await harness.user.click(eraseButton);
 
@@ -509,6 +516,9 @@ describe('WalletApp federation flow', () => {
     await harness.user.click(screen.getByRole('button', { name: 'Send' }));
     await harness.user.click(screen.getByRole('button', { name: 'Ecash' }));
     await harness.user.click(screen.getByRole('button', { name: '3' }));
+    await harness.user.click(
+      screen.getByRole('button', { name: 'Review send' }),
+    );
     await harness.user.click(
       screen.getByRole('button', { name: 'Create link' }),
     );

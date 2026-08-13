@@ -9,6 +9,7 @@ interface ScreenFrameProps {
   busy?: boolean;
   chrome?: 'default' | 'none';
   surface?: 'light' | 'dark';
+  transition?: 'onboarding';
 }
 
 export function ScreenFrame({
@@ -18,6 +19,7 @@ export function ScreenFrame({
   busy = false,
   chrome = 'default',
   surface = 'light',
+  transition,
 }: ScreenFrameProps) {
   return (
     <div
@@ -39,7 +41,12 @@ export function ScreenFrame({
           ) : null}
         </header>
       ) : null}
-      <main className="screen" aria-busy={busy}>
+      <main
+        className={
+          transition === 'onboarding' ? 'screen screen--onboarding' : 'screen'
+        }
+        aria-busy={busy}
+      >
         {children}
       </main>
     </div>

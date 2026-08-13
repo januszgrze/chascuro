@@ -21,6 +21,7 @@ import {
   paymentFingerprint,
   quoteId,
   satsToMsats,
+  secretMnemonic,
   secretRecordRef,
   type OperationDirection,
   type OperationGuidanceCode,
@@ -71,11 +72,6 @@ type HomeProps = ComponentProps<typeof HomeScreen>;
 function createHomeProps(overrides: Partial<HomeProps> = {}): HomeProps {
   return {
     snapshot: SNAPSHOT,
-    securitySettings: {
-      version: 1,
-      inactivityTimeoutMs: 5 * 60_000,
-      backgroundTimeoutMs: 30_000,
-    },
     refreshing: false,
     onRefresh: vi.fn(async () => undefined),
     onLock: vi.fn(async () => undefined),
@@ -111,9 +107,6 @@ function createHomeProps(overrides: Partial<HomeProps> = {}): HomeProps {
       .fn()
       .mockResolvedValue({ ok: false, error: 'Unavailable.' }),
     onRecoverLightningInvoice: vi
-      .fn()
-      .mockResolvedValue({ ok: false, error: 'Unavailable.' }),
-    onUpdateSecuritySettings: vi
       .fn()
       .mockResolvedValue({ ok: false, error: 'Unavailable.' }),
     onErase: vi.fn().mockResolvedValue({ ok: false, error: 'Unavailable.' }),
@@ -199,9 +192,26 @@ describe('HomeScreen scanned wallet input', () => {
 
     await user.click(screen.getByRole('button', { name: 'Enter manually' }));
     expect(screen.getByLabelText('Ecash notes')).toHaveFocus();
+    expect(screen.getByPlaceholderText('Type in ecash note')).toBeVisible();
+    expect(
+      screen.queryByRole('navigation', { name: 'Wallet navigation' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Scan test QR' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Paste ecash note' }),
+    ).not.toBeInTheDocument();
     await user.type(screen.getByLabelText('Ecash notes'), 'manual ecash notes');
     await user.click(screen.getByRole('button', { name: 'Continue' }));
     expect(onParseEcash).toHaveBeenCalledWith('manual ecash notes');
+
+    await user.click(screen.getByRole('button', { name: 'Enter manually' }));
+    expect(screen.queryByLabelText('Ecash notes')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('navigation', { name: 'Wallet navigation' }),
+    ).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Scan test QR' })).toBeVisible();
   });
 
   it('rejects unrelated scans and auto-quotes (never auto-pays) a BOLT11 invoice', async () => {
@@ -228,6 +238,16 @@ describe('HomeScreen scanned wallet input', () => {
 
     await user.click(screen.getByRole('button', { name: 'Enter manually' }));
     expect(screen.getByLabelText('Lightning payment request')).toHaveFocus();
+    expect(screen.getByPlaceholderText('Type in payment URL')).toBeVisible();
+    expect(
+      screen.queryByRole('navigation', { name: 'Wallet navigation' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Scan test QR' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Paste payment URL' }),
+    ).not.toBeInTheDocument();
     await user.type(
       screen.getByLabelText('Lightning payment request'),
       'lntb1manualinvoice',
@@ -237,6 +257,15 @@ describe('HomeScreen scanned wallet input', () => {
       'lntb1manualinvoice',
       '10',
     );
+
+    await user.click(screen.getByRole('button', { name: 'Enter manually' }));
+    expect(
+      screen.queryByLabelText('Lightning payment request'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('navigation', { name: 'Wallet navigation' }),
+    ).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Scan test QR' })).toBeVisible();
   });
 
   it('reviews a combined payment and makes a failed attempt single-use', async () => {
@@ -493,9 +522,14 @@ describe('HomeScreen scanned wallet input', () => {
     await user.click(screen.getByRole('button', { name: 'Review payment' }));
     await user.click(screen.getByRole('button', { name: /Pay.*100/ }));
 
+    // A submitted payment no longer shows a separate pending screen: the
+    // review screen stays put with the Pay button in its in-flight state until
+    // the payment settles.
+    expect(screen.getByRole('heading', { name: 'Pay invoice' })).toBeVisible();
     expect(
-      screen.getByRole('heading', { name: 'Payment pending' }),
-    ).toBeVisible();
+      screen.queryByRole('heading', { name: 'Payment pending' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Pay.*100/ })).toBeDisabled();
     expect(screen.queryByText('Thanks, paid!')).not.toBeInTheDocument();
 
     const settled = walletOperation({
@@ -835,7 +869,7 @@ describe('HomeScreen activity', () => {
 });
 
 describe('HomeScreen settings and secret-storage warnings', () => {
-  it('lists every connected federation in the Network panel', async () => {
+  it('lists every connected federation in the Wallet panel', async () => {
     const user = userEvent.setup();
     renderHome({
       snapshot: {
@@ -869,59 +903,107 @@ describe('HomeScreen settings and secret-storage warnings', () => {
     await user.click(
       screen.getByRole('button', { name: 'Backup and settings' }),
     );
-    const networkLabel = screen.getByText('Network', {
+    const walletLabel = screen.getByText('Wallet', {
       selector: '.settings-row-label',
     });
-    const networkRow = networkLabel.closest('details');
-    if (networkRow === null) throw new Error('Network row is missing.');
-    await user.click(networkLabel);
+    const walletRow = walletLabel.closest('details');
+    if (walletRow === null) throw new Error('Wallet row is missing.');
+    await user.click(walletLabel);
 
-    const network = within(networkRow);
-    expect(network.getByText('Connected federations')).toBeVisible();
-    expect(network.getByText('2')).toBeVisible();
-    expect(network.getByText('Primary federation')).toBeVisible();
-    expect(network.getByText('Main Federation')).toBeVisible();
-    expect(network.getByText('Secondary Federation')).toBeVisible();
-    expect(network.getByText('1250 sats')).toBeVisible();
-    expect(network.getByText('840 sats')).toBeVisible();
+    const wallet = within(walletRow);
+    expect(wallet.getByText('Connected federations')).toBeVisible();
+    expect(wallet.getByText('2')).toBeVisible();
+    expect(wallet.getByText('Primary federation')).toBeVisible();
+    expect(wallet.getByText('Main Federation')).toBeVisible();
+    expect(wallet.getByText('Secondary Federation')).toBeVisible();
+    expect(wallet.getByText('1250 sats')).toBeVisible();
+    expect(wallet.getByText('840 sats')).toBeVisible();
   });
 
-  it('requires at least one automatic lock and saves supported choices', async () => {
+  it('shows recovery words in the onboarding layout and clears them on section close', async () => {
     const user = userEvent.setup();
-    const onUpdateSecuritySettings = vi.fn().mockResolvedValue({
-      ok: true,
-      value: {
-        version: 1,
-        inactivityTimeoutMs: null,
-        backgroundTimeoutMs: 30_000,
-      },
+    const mnemonic = secretMnemonic([
+      'gravity',
+      'ocean',
+      'pigeon',
+      'thunder',
+      'velvet',
+      'cactus',
+      'ridge',
+      'salmon',
+      'hollow',
+      'jungle',
+      'marble',
+      'tornado',
+    ]);
+    renderHome({
+      onRevealMnemonic: vi.fn().mockResolvedValue({
+        ok: true,
+        value: mnemonic,
+      }),
     });
-    renderHome({ onUpdateSecuritySettings });
 
     await user.click(
       screen.getByRole('button', { name: 'Backup and settings' }),
     );
-    await user.click(screen.getByText('Advanced'));
-    await user.selectOptions(
-      screen.getByLabelText('Lock after inactivity'),
-      'never',
-    );
-    await user.click(screen.getByRole('button', { name: 'Save Settings' }));
-    expect(onUpdateSecuritySettings).toHaveBeenCalledWith(null, 30_000);
     expect(
-      await screen.findByText('Automatic lock settings saved.'),
+      screen.queryByText('Network', { selector: '.settings-row-label' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Advanced', { selector: '.settings-row-label' }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByText('Seed & PIN'));
+    await user.click(
+      screen.getByRole('button', { name: 'Reveal recovery words' }),
+    );
+
+    expect(screen.getByText('gravity')).toBeVisible();
+    expect(screen.getByText('tornado')).toBeVisible();
+    expect(
+      screen.getByText(/Anyone with them can take your money/),
     ).toBeVisible();
 
-    await user.selectOptions(
-      screen.getByLabelText('Lock while in background'),
-      'never',
+    await user.click(
+      screen.getByText('Wallet', { selector: '.settings-row-label' }),
     );
+
+    expect(screen.queryByText('gravity')).not.toBeInTheDocument();
+    expect(() => mnemonic.reveal()).toThrow();
     expect(
-      screen.getByText('At least one automatic lock must remain enabled.'),
+      screen.getByText('Connected federations', { selector: 'dt' }),
     ).toBeVisible();
-    expect(
-      screen.getByRole('button', { name: 'Save Settings' }),
-    ).toBeDisabled();
+  });
+
+  it('clears a recovery phrase that arrives after the seed section closes', async () => {
+    const user = userEvent.setup();
+    const mnemonic = secretMnemonic(
+      Array.from({ length: 12 }, () => 'abandon'),
+    );
+    let finishReveal:
+      ((result: { ok: true; value: typeof mnemonic }) => void) | undefined;
+    const onRevealMnemonic = vi.fn(
+      () =>
+        new Promise<{ ok: true; value: typeof mnemonic }>((resolve) => {
+          finishReveal = resolve;
+        }),
+    );
+    renderHome({ onRevealMnemonic });
+
+    await user.click(
+      screen.getByRole('button', { name: 'Backup and settings' }),
+    );
+    await user.click(screen.getByText('Seed & PIN'));
+    await user.click(
+      screen.getByRole('button', { name: 'Reveal recovery words' }),
+    );
+    await user.click(
+      screen.getByText('Wallet', { selector: '.settings-row-label' }),
+    );
+
+    await act(async () => finishReveal?.({ ok: true, value: mnemonic }));
+
+    await waitFor(() => expect(() => mnemonic.reveal()).toThrow());
+    expect(screen.queryByText('abandon')).not.toBeInTheDocument();
   });
 
   it('warns when bearer ecash exists only in memory', async () => {
@@ -947,11 +1029,49 @@ describe('HomeScreen settings and secret-storage warnings', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(screen.getByRole('button', { name: 'Ecash' }));
     await user.click(screen.getByRole('button', { name: '1' }));
+    await user.click(screen.getByRole('button', { name: 'Review send' }));
     await user.click(screen.getByRole('button', { name: 'Create link' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Share these notes now.',
     );
+  });
+
+  it('reviews the ecash amount before minting the link', async () => {
+    const user = userEvent.setup();
+    const onCreateEcashSpend = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        operation: walletOperation({
+          id: 'reviewed-ecash',
+          kind: 'ecash_send',
+          direction: 'outgoing',
+          status: 'pending',
+        }),
+        notes: clearableSecretText('fedimint-ecash:reviewed'),
+        secretRecordRef: secretRecordRef('secret:reviewed-ecash'),
+      },
+    });
+    renderHome({ onCreateEcashSpend });
+
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(screen.getByRole('button', { name: 'Ecash' }));
+    await user.click(screen.getByRole('button', { name: '1' }));
+    await user.click(screen.getByRole('button', { name: '2' }));
+
+    // The check key only moves to a review step — no link is minted yet.
+    await user.click(screen.getByRole('button', { name: 'Review send' }));
+    expect(screen.getByRole('heading', { name: 'Send' })).toBeInTheDocument();
+    expect(screen.getByText('12')).toBeInTheDocument();
+    expect(onCreateEcashSpend).not.toHaveBeenCalled();
+
+    // Back returns to the keypad with the amount preserved, still unminted.
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    await user.click(screen.getByRole('button', { name: 'Review send' }));
+    await user.click(screen.getByRole('button', { name: 'Create link' }));
+
+    expect(onCreateEcashSpend).toHaveBeenCalledTimes(1);
+    expect(onCreateEcashSpend).toHaveBeenCalledWith('12');
   });
 });
 

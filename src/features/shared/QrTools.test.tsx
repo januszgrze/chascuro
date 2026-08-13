@@ -31,7 +31,23 @@ describe('QR tools', () => {
 
     const image = await screen.findByRole('img', { name: 'Ecash QR code' });
     expect(image).toHaveAttribute('src', expect.stringMatching(/^data:image/));
+    expect(image).toHaveAttribute(
+      'src',
+      expect.stringMatching(/^data:image\/svg\+xml/),
+    );
     expect(document.body).not.toHaveTextContent(secret);
+  });
+
+  it('renders without allocating a browser canvas', async () => {
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext');
+
+    render(<QrCode value="lnbc1canvasindependent" label="Invoice QR code" />);
+
+    expect(
+      await screen.findByRole('img', { name: 'Invoice QR code' }),
+    ).toBeVisible();
+    expect(getContext).not.toHaveBeenCalled();
+    getContext.mockRestore();
   });
 
   it('never starts scanning or submits a payload without an explicit tap', () => {

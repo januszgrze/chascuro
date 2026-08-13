@@ -52,7 +52,9 @@ export function WalletDock({
         aria-label="Wallet home"
         onClick={onHome}
       >
-        <BitcoinMark />
+        <span className="wallet-nav-brand">
+          <BitcoinMark />
+        </span>
       </button>
       <button
         className={`wallet-dock-btn${active === 'send' ? ' is-active' : ''}`}
@@ -61,7 +63,12 @@ export function WalletDock({
         aria-label="Send"
         onClick={() => onNavigate('lightning', 'send')}
       >
-        <ArrowUpIcon />
+        {active === 'send' && (
+          <span className="wallet-nav-indicator" aria-hidden="true" />
+        )}
+        <span className="wallet-nav-icon">
+          <ArrowUpIcon />
+        </span>
       </button>
       <button
         className={`wallet-dock-btn${active === 'receive' ? ' is-active' : ''}`}
@@ -70,7 +77,12 @@ export function WalletDock({
         aria-label="Receive"
         onClick={() => onNavigate('ecash', 'receive')}
       >
-        <ArrowDownIcon />
+        {active === 'receive' && (
+          <span className="wallet-nav-indicator" aria-hidden="true" />
+        )}
+        <span className="wallet-nav-icon">
+          <ArrowDownIcon />
+        </span>
       </button>
     </nav>
   );
@@ -85,6 +97,7 @@ export function ResultScreen({
   subtitle,
   onBack,
   error,
+  hold = false,
   children,
 }: {
   titleId: string;
@@ -95,11 +108,17 @@ export function ResultScreen({
   subtitle?: ReactNode;
   onBack?: () => void;
   error?: string;
+  /**
+   * Hold the icon and copy static on entrance (no pop or rise). Used when the
+   * screen arrives over a crossfade from a screen that already showed them, so
+   * the shared elements stay put instead of re-animating.
+   */
+  hold?: boolean;
   children: ReactNode;
 }) {
   return (
     <section
-      className={`result-screen result-screen--${tone}`}
+      className={`result-screen result-screen--${tone}${hold ? ' result-screen--hold' : ''}`}
       aria-labelledby={titleId}
     >
       {onBack !== undefined && (
@@ -206,15 +225,25 @@ export function CopyButton({
 export function SettingsRow({
   icon,
   label,
+  open,
+  onToggle,
   children,
 }: {
   icon: ReactNode;
   label: string;
+  open: boolean;
+  onToggle(): void;
   children: ReactNode;
 }) {
   return (
-    <details className="settings-row">
-      <summary className="settings-summary">
+    <details className="settings-row" open={open}>
+      <summary
+        className="settings-summary"
+        onClick={(event) => {
+          event.preventDefault();
+          onToggle();
+        }}
+      >
         <span className="settings-row-icon">{icon}</span>
         <span className="settings-row-label">{label}</span>
         <span className="settings-chevron">

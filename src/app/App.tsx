@@ -1,4 +1,10 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 
 import {
   IdentitySetupScreen,
@@ -19,6 +25,10 @@ import {
 } from '../features/chat/chat-route';
 import { ScreenFrame } from '../features/shared/ScreenFrame';
 import {
+  runViewTransition,
+  type ViewTransitionDirection,
+} from '../features/shared/screen-transition';
+import {
   BootScreen,
   LockingScreen,
   OpeningScreen,
@@ -36,6 +46,38 @@ const DISPOSABLE_TEST_PASSPHRASE = 'disposable-fedimint-browser-test-wallet';
 
 export function WalletApp(dependencies: WalletAppProps) {
   const [controller] = useState(() => new WalletAppController(dependencies));
+  const [onboardingTransitionPending, setOnboardingTransitionPending] =
+    useState(false);
+  const pendingOnboardingTransition = useRef<
+    ViewTransitionDirection | undefined
+  >(undefined);
+  const subscribe = useMemo(
+    () => (listener: () => void) => {
+      let previousPhase = controller.getState().phase;
+      return controller.subscribe(() => {
+        const nextPhase = controller.getState().phase;
+        const direction =
+          nextPhase !== previousPhase &&
+          (nextPhase === 'identity' ||
+            nextPhase === 'invite' ||
+            nextPhase === 'review' ||
+            nextPhase === 'home')
+            ? pendingOnboardingTransition.current
+            : undefined;
+        previousPhase = nextPhase;
+
+        if (direction === undefined) {
+          listener();
+          return;
+        }
+
+        pendingOnboardingTransition.current = undefined;
+        setOnboardingTransitionPending(false);
+        runViewTransition(direction, listener);
+      });
+    },
+    [controller],
+  );
   const [setupStep, setSetupStep] = useState<'welcome' | 'identity' | 'pin'>(
     'welcome',
   );
@@ -45,10 +87,26 @@ export function WalletApp(dependencies: WalletAppProps) {
   const [chatLocation, setChatLocation] = useState<ChatLocation | null>(null);
   const [restoreChatFocus, setRestoreChatFocus] = useState(false);
   const state = useSyncExternalStore(
-    controller.subscribe,
+    subscribe,
     controller.getState,
     controller.getState,
   );
+
+  async function runOnboardingControllerTransition(
+    direction: ViewTransitionDirection,
+    update: () => Promise<void>,
+  ): Promise<void> {
+    pendingOnboardingTransition.current = direction;
+    setOnboardingTransitionPending(true);
+    try {
+      await update();
+    } finally {
+      if (pendingOnboardingTransition.current === direction) {
+        pendingOnboardingTransition.current = undefined;
+        setOnboardingTransitionPending(false);
+      }
+    }
+  }
 
   // Reset chat navigation whenever the chat controller identity changes (a new
   // unlocked session, or cleared on lock) so no selection leaks across sessions.
@@ -119,6 +177,9 @@ export function WalletApp(dependencies: WalletAppProps) {
     state.phase === 'opening' ||
     state.phase === 'locking' ||
     state.phase === 'unsupported';
+  const isOnboardingTransitionPhase =
+    isOnboardingPhase ||
+    (state.phase === 'opening' && onboardingTransitionPending);
 
   let content;
   switch (state.phase) {
@@ -138,14 +199,20 @@ export function WalletApp(dependencies: WalletAppProps) {
         <WelcomeScreen
           mode="install"
           error={state.error}
-          onInstallConfirmed={() => setSetupStep('identity')}
+          onInstallConfirmed={() =>
+            runViewTransition('forward', () => setSetupStep('identity'))
+          }
           onCreate={() => {
-            setIdentityStartMode('choice');
-            setSetupStep('identity');
+            runViewTransition('forward', () => {
+              setIdentityStartMode('choice');
+              setSetupStep('identity');
+            });
           }}
           onRestore={() => {
-            setIdentityStartMode('restore');
-            setSetupStep('identity');
+            runViewTransition('forward', () => {
+              setIdentityStartMode('restore');
+              setSetupStep('identity');
+            });
           }}
         />
       ) : shouldShowSetupIdentity ? (
@@ -161,13 +228,13 @@ export function WalletApp(dependencies: WalletAppProps) {
           onConfirmBackup={async () => {
             await controller.confirmIdentityBackup();
             if (controller.getState().error === undefined) {
-              setSetupStep('pin');
+              runViewTransition('forward', () => setSetupStep('pin'));
             }
           }}
           onRestore={async (words) => {
             await controller.restoreIdentity(words);
             if (controller.getState().error === undefined) {
-              setSetupStep('pin');
+              runViewTransition('forward', () => setSetupStep('pin'));
             }
           }}
         />
@@ -175,7 +242,11 @@ export function WalletApp(dependencies: WalletAppProps) {
         <SetupScreen
           busy={state.busy === 'setup'}
           error={state.error}
-          onSetup={(passphrase) => controller.setup(passphrase)}
+          onSetup={(passphrase) =>
+            runOnboardingControllerTransition('forward', () =>
+              controller.setup(passphrase),
+            )
+          }
         />
       );
       break;
@@ -211,8 +282,16 @@ export function WalletApp(dependencies: WalletAppProps) {
           }
           error={state.error}
           onCreate={() => controller.createIdentity()}
-          onConfirmBackup={() => controller.confirmIdentityBackup()}
-          onRestore={(words) => controller.restoreIdentity(words)}
+          onConfirmBackup={() =>
+            runOnboardingControllerTransition('forward', () =>
+              controller.confirmIdentityBackup(),
+            )
+          }
+          onRestore={(words) =>
+            runOnboardingControllerTransition('forward', () =>
+              controller.restoreIdentity(words),
+            )
+          }
         />
       );
       break;
@@ -221,7 +300,11 @@ export function WalletApp(dependencies: WalletAppProps) {
         <FederationInviteScreen
           busy={state.busy === 'preview'}
           error={state.error}
-          onPreview={(inviteCode) => controller.previewFederation(inviteCode)}
+          onPreview={(inviteCode) =>
+            runOnboardingControllerTransition('forward', () =>
+              controller.previewFederation(inviteCode),
+            )
+          }
           onLock={() => controller.lock()}
         />
       );
@@ -232,7 +315,11 @@ export function WalletApp(dependencies: WalletAppProps) {
           <FederationInviteScreen
             busy={false}
             error={state.error}
-            onPreview={(inviteCode) => controller.previewFederation(inviteCode)}
+            onPreview={(inviteCode) =>
+              runOnboardingControllerTransition('forward', () =>
+                controller.previewFederation(inviteCode),
+              )
+            }
             onLock={() => controller.lock()}
           />
         ) : (
@@ -240,14 +327,19 @@ export function WalletApp(dependencies: WalletAppProps) {
             candidate={state.candidate}
             busy={state.busy === 'join'}
             error={state.error}
-            onBack={() => controller.returnToInvite()}
+            onBack={() =>
+              runViewTransition('back', () => controller.returnToInvite())
+            }
             onJoin={async (trustAcknowledged, mainnetRiskAcknowledged) => {
-              await controller.joinFederation(
-                trustAcknowledged,
-                mainnetRiskAcknowledged,
+              setShowReady(true);
+              await runOnboardingControllerTransition('forward', () =>
+                controller.joinFederation(
+                  trustAcknowledged,
+                  mainnetRiskAcknowledged,
+                ),
               );
-              if (controller.getState().phase === 'home') {
-                setShowReady(true);
+              if (controller.getState().phase !== 'home') {
+                setShowReady(false);
               }
             }}
             onLock={() => controller.lock()}
@@ -257,7 +349,9 @@ export function WalletApp(dependencies: WalletAppProps) {
     case 'home':
       content = shouldShowReady ? (
         <ReadyScreen
-          onContinue={() => setShowReady(false)}
+          onContinue={() =>
+            runViewTransition('forward', () => setShowReady(false))
+          }
           onAddFederation={
             state.walletSnapshot.connectedFederations.length < 3
               ? () => {
@@ -297,7 +391,6 @@ export function WalletApp(dependencies: WalletAppProps) {
           }
           autoFocusChat={restoreChatFocus}
           snapshot={state.walletSnapshot}
-          securitySettings={state.securitySettings}
           refreshing={state.busy === 'refresh'}
           error={state.error}
           onRefresh={() => controller.refreshBalance()}
@@ -325,15 +418,6 @@ export function WalletApp(dependencies: WalletAppProps) {
           onRecoverEcashExport={(key) => controller.recoverEcashExport(key)}
           onRecoverLightningInvoice={(key) =>
             controller.recoverLightningInvoice(key)
-          }
-          onUpdateSecuritySettings={(
-            inactivityTimeoutMs,
-            backgroundTimeoutMs,
-          ) =>
-            controller.updateSecuritySettings(
-              inactivityTimeoutMs,
-              backgroundTimeoutMs,
-            )
           }
           onErase={async (typedConfirmation) => {
             const result = await controller.eraseWallet(typedConfirmation);
@@ -366,6 +450,7 @@ export function WalletApp(dependencies: WalletAppProps) {
           : 'default'
       }
       surface={shouldShowWelcome || isDarkStatusPhase ? 'dark' : 'light'}
+      transition={isOnboardingTransitionPhase ? 'onboarding' : undefined}
     >
       {content}
     </ScreenFrame>

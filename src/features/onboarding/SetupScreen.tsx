@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { PinPad } from '../shared/PinPad';
 import { OnboardingProgress } from '../shared/OnboardingProgress';
 import { ScreenError } from '../shared/ScreenFrame';
+import { runViewTransition } from '../shared/screen-transition';
 
 interface SetupScreenProps {
   busy: boolean;
@@ -36,13 +37,13 @@ export function SetupScreen({ busy, error, onSetup }: SetupScreenProps) {
 
     if (!isConfirm) {
       setValidationError(undefined);
-      setStep('confirm');
+      runViewTransition('forward', () => setStep('confirm'));
       return;
     }
 
     if (confirmation !== pin) {
       setValidationError('Those PINs did not match. Try again.');
-      resetToCreate();
+      runViewTransition('back', resetToCreate);
       return;
     }
 

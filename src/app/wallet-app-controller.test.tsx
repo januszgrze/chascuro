@@ -1100,7 +1100,6 @@ describe('WalletAppController feature safety', () => {
     render(
       <HomeScreen
         snapshot={state.walletSnapshot}
-        securitySettings={state.securitySettings}
         refreshing={false}
         error={state.error}
         onRefresh={() => harness.controller.refreshBalance()}
@@ -1135,12 +1134,6 @@ describe('WalletAppController feature safety', () => {
         onRecoverLightningInvoice={(key) =>
           harness.controller.recoverLightningInvoice(key)
         }
-        onUpdateSecuritySettings={(inactivityTimeoutMs, backgroundTimeoutMs) =>
-          harness.controller.updateSecuritySettings(
-            inactivityTimeoutMs,
-            backgroundTimeoutMs,
-          )
-        }
         onErase={(confirmation) => harness.controller.eraseWallet(confirmation)}
       />,
     );
@@ -1148,6 +1141,7 @@ describe('WalletAppController feature safety', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(screen.getByRole('button', { name: 'Ecash' }));
     await user.click(screen.getByRole('button', { name: '1' }));
+    await user.click(screen.getByRole('button', { name: 'Review send' }));
     await user.click(screen.getByRole('button', { name: 'Create link' }));
 
     expect(
