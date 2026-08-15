@@ -899,7 +899,12 @@ function EcashRecoverySheet({
           Encrypted recovery failed, so this payment was not sent. Save or share
           this bearer ecash now; closing this sheet removes the app's only copy.
         </p>
-        <QrCode value={notes} label="Unsent ecash recovery QR code" />
+        <QrCode
+          allowMultipart
+          contentType="ecash"
+          value={notes}
+          label="Unsent ecash recovery QR code"
+        />
         <button
           className="chat-pay-send"
           type="button"

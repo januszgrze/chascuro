@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { IScannerControls } from '@zxing/browser';
 
 import { RefreshIcon } from './icons';
+import { assembleQrValue, type QrAssemblyState } from './QrPayloadAssembler';
 
 interface QrScannerProps {
   disabled?: boolean;
@@ -20,7 +21,9 @@ export function QrScanner({
   const generationRef = useRef(0);
   const mountedRef = useRef(false);
   const onScanRef = useRef(onScan);
+  const assemblyStateRef = useRef<QrAssemblyState>(null);
   const [active, setActive] = useState(false);
+  const [assemblyProgress, setAssemblyProgress] = useState(0);
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -35,6 +38,7 @@ export function QrScanner({
       generationRef.current += 1;
       controlsRef.current?.stop();
       controlsRef.current = null;
+      assemblyStateRef.current = null;
       stopVideoTracks(video);
     };
   }, []);
@@ -47,22 +51,31 @@ export function QrScanner({
     const generation = generationRef.current + 1;
     generationRef.current = generation;
     setError(undefined);
+    assemblyStateRef.current = null;
+    setAssemblyProgress(0);
     setActive(true);
     try {
-      const { BrowserQRCodeReader } = await import('@zxing/browser');
+      const [{ ResilientQrReader }, { DecodeHintType }] = await Promise.all([
+        import('./ResilientQrReader'),
+        import('@zxing/library'),
+      ]);
       if (!isCurrentGeneration(generation)) {
         stopVideoTracks(videoRef.current);
         return;
       }
 
-      const reader = new BrowserQRCodeReader(undefined, {
+      const hints = new Map([[DecodeHintType.TRY_HARDER, true]]);
+      const reader = new ResilientQrReader(hints, {
         delayBetweenScanAttempts: 150,
+        delayBetweenScanSuccess: 100,
       });
       const controls = await reader.decodeFromConstraints(
         {
           audio: false,
           video: {
             facingMode: { ideal: 'environment' },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
           },
         },
         videoRef.current,
@@ -74,23 +87,41 @@ export function QrScanner({
           }
 
           if (result !== undefined) {
-            const value = result.getText();
+            const rawValue = result.getText();
+            const assembled = assembleQrValue(
+              assemblyStateRef.current,
+              rawValue,
+            );
+            if (assembled.kind === 'pending') {
+              assemblyStateRef.current = assembled.state;
+              setAssemblyProgress(assembled.progress);
+              return;
+            }
+
             generationRef.current += 1;
             callbackControls.stop();
             controlsRef.current = null;
+            assemblyStateRef.current = null;
+            setAssemblyProgress(0);
             stopVideoTracks(videoRef.current);
             setActive(false);
-            onScanRef.current(value);
+            onScanRef.current(
+              assembled.kind === 'complete' ? assembled.value : rawValue,
+            );
             return;
           }
 
           if (
             scanError !== undefined &&
-            scanError.name !== 'NotFoundException'
+            scanError.name !== 'NotFoundException' &&
+            scanError.name !== 'ChecksumException' &&
+            scanError.name !== 'FormatException'
           ) {
             generationRef.current += 1;
             callbackControls.stop();
             controlsRef.current = null;
+            assemblyStateRef.current = null;
+            setAssemblyProgress(0);
             stopVideoTracks(videoRef.current);
             setActive(false);
             setError('The camera could not read a QR code.');
@@ -113,6 +144,8 @@ export function QrScanner({
       generationRef.current += 1;
       controlsRef.current?.stop();
       controlsRef.current = null;
+      assemblyStateRef.current = null;
+      setAssemblyProgress(0);
       stopVideoTracks(videoRef.current);
       setActive(false);
       setError('Camera access was denied or is unavailable.');
@@ -123,6 +156,8 @@ export function QrScanner({
     generationRef.current += 1;
     controlsRef.current?.stop();
     controlsRef.current = null;
+    assemblyStateRef.current = null;
+    setAssemblyProgress(0);
     stopVideoTracks(videoRef.current);
     setActive(false);
   }
@@ -146,6 +181,7 @@ export function QrScanner({
           <span className="chat-scan-corner is-tr" aria-hidden="true" />
           <span className="chat-scan-corner is-bl" aria-hidden="true" />
           <span className="chat-scan-corner is-br" aria-hidden="true" />
+          <QrScanProgress value={assemblyProgress} />
           {!active && (
             <button
               className="chat-scan-start"
@@ -175,6 +211,7 @@ export function QrScanner({
           muted
           playsInline
         />
+        <QrScanProgress value={assemblyProgress} />
         {!active && (
           <>
             <p
@@ -200,13 +237,16 @@ export function QrScanner({
 
   return (
     <div className="qr-scanner">
-      <video
-        ref={videoRef}
-        aria-label="QR camera preview"
-        hidden={!active}
-        muted
-        playsInline
-      />
+      <div className="qr-scanner-viewport">
+        <video
+          ref={videoRef}
+          aria-label="QR camera preview"
+          hidden={!active}
+          muted
+          playsInline
+        />
+        <QrScanProgress value={assemblyProgress} />
+      </div>
       {error !== undefined && (
         <p className="fine-print" role="status">
           {error}
@@ -220,6 +260,31 @@ export function QrScanner({
       >
         {active ? 'Stop camera' : 'Scan QR with camera'}
       </button>
+    </div>
+  );
+}
+
+function QrScanProgress({ value }: { value: number }) {
+  if (value <= 0) {
+    return null;
+  }
+
+  const percent = Math.max(1, Math.min(100, Math.round(value * 100)));
+  return (
+    <div
+      className="qr-scan-progress"
+      role="progressbar"
+      aria-label="Multipart QR scan progress"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={percent}
+    >
+      <span
+        className="qr-scan-progress-fill"
+        style={{ width: `${percent}%` }}
+        aria-hidden="true"
+      />
+      <span className="qr-scan-progress-label">{percent}%</span>
     </div>
   );
 }

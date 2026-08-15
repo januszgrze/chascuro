@@ -43,8 +43,18 @@ vi.mock('../shared/QrScanner', () => ({
 }));
 
 vi.mock('../shared/QrCode', () => ({
-  QrCode: ({ value, label }: { value: string; label: string }) => (
-    <output aria-label={label}>{value}</output>
+  QrCode: ({
+    value,
+    label,
+    contentType,
+  }: {
+    value: string;
+    label: string;
+    contentType?: 'bolt11';
+  }) => (
+    <output aria-label={label} data-content-type={contentType}>
+      {value}
+    </output>
   ),
 }));
 
@@ -553,6 +563,10 @@ describe('HomeScreen Lightning receive', () => {
     expect(
       await screen.findByLabelText('Lightning invoice QR code'),
     ).toHaveTextContent(rawInvoice);
+    expect(screen.getByLabelText('Lightning invoice QR code')).toHaveAttribute(
+      'data-content-type',
+      'bolt11',
+    );
     expect(screen.getByRole('button', { name: 'Share invoice' })).toBeVisible();
     expect(screen.getByRole('timer')).toHaveTextContent('Expires in');
     expect(screen.getByRole('alert')).toHaveTextContent(

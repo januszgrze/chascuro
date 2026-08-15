@@ -753,6 +753,8 @@ function EcashSendScreen({
           )}
           <div className="qr-card">
             <QrCode
+              allowMultipart
+              contentType="ecash"
               value={exported.notes.reveal()}
               label="Ecash notes QR code"
             />
@@ -760,7 +762,6 @@ function EcashSendScreen({
           <ShareButton
             secret={exported.notes}
             label="Share link"
-            title="Ecash payment"
             onStatus={setCopyStatus}
           />
           <p className="visually-hidden" aria-live="polite">
@@ -1020,6 +1021,7 @@ function LightningReceiveScreen({
             </p>
             <div className="qr-card">
               <QrCode
+                contentType="bolt11"
                 value={receive.invoice.reveal()}
                 label="Lightning invoice QR code"
               />
@@ -1843,6 +1845,7 @@ function TransactionDetailScreen({
                 {formatCountdown((operation.expiresAtMs ?? nowMs) - nowMs)}.
               </p>
               <QrCode
+                contentType="bolt11"
                 value={recovered.secret.reveal()}
                 label="Recovered Lightning invoice QR code"
               />
