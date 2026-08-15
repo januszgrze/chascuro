@@ -66,10 +66,12 @@
 - Mnemonics and bearer payloads use bounded clearable wrappers, are excluded
   from snapshots and generic errors, and are cleared on the main navigation and
   lock paths. JavaScript memory clearing remains best-effort.
-- Oversized bearer ecash is rendered as local multipart QR frames. QR scanning
-  starts only after an explicit user action, prefers the rear camera, collects
-  recognized multipart frames until their checksum is valid, stops after one
-  complete candidate, and never submits the result automatically.
+- Oversized bearer ecash is rendered as local multipart QR frames using the
+  interoperable UTF-8/binary ecash boundary. QR scanning starts only after an
+  explicit user action, prefers the rear camera, reports checksum-independent
+  frame progress, collects recognized multipart frames until their checksum is
+  valid, stops after one complete candidate, and never submits the result
+  automatically.
 - Logs accept allowlisted event codes and coarse error classes only.
 - The service worker precaches static build output and defines no runtime
   federation, invoice, e-cash, or payment cache.

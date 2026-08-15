@@ -754,6 +754,7 @@ function EcashSendScreen({
           <div className="qr-card">
             <QrCode
               allowMultipart
+              contentType="ecash"
               value={exported.notes.reveal()}
               label="Ecash notes QR code"
             />

@@ -2,6 +2,7 @@ import {
   areFramesComplete,
   framesToData,
   parseFramesReducer,
+  progressOfFrames,
   totalNumberOfFrames,
   type State as QrLoopState,
 } from 'qrloop';
@@ -10,7 +11,7 @@ export type QrAssemblyState = QrLoopState;
 
 export type QrAssemblyResult =
   | { kind: 'complete'; value: string }
-  | { kind: 'pending'; state: QrAssemblyState };
+  | { kind: 'pending'; progress: number; state: QrAssemblyState };
 
 const MAX_MULTIPART_FRAMES = 1_024;
 
@@ -26,7 +27,11 @@ export function assembleQrValue(
   try {
     const nextState = parseFramesReducer(state, value);
     if (!areFramesComplete(nextState)) {
-      return { kind: 'pending', state: nextState };
+      return {
+        kind: 'pending',
+        progress: normalizedProgress(nextState),
+        state: nextState,
+      };
     }
 
     try {
@@ -41,12 +46,17 @@ export function assembleQrValue(
       // A later pass can replace a bad frame and satisfy the payload checksum.
       return {
         kind: 'pending',
+        progress: Math.min(normalizedProgress(nextState), 0.99),
         state: nextState,
       };
     }
   } catch {
     return { kind: 'complete', value };
   }
+}
+
+function normalizedProgress(state: QrAssemblyState): number {
+  return Math.max(0, Math.min(progressOfFrames(state), 1));
 }
 
 function looksLikeQrLoopFrame(value: string): boolean {

@@ -1,18 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import { Buffer } from 'buffer';
 import QRCode from 'qrcode';
 import { dataToFrames } from 'qrloop';
 
 interface QrCodeProps {
   allowMultipart?: boolean;
-  contentType?: 'bolt11';
+  contentType?: 'bolt11' | 'ecash';
   value: string;
   label: string;
 }
 
 // Keep fixed-size wallet QRs below the density that proved unreliable on phones.
 const MAX_STATIC_QR_BYTES = 320;
-const MULTIPART_FRAME_INTERVAL_MS = 250;
+const MULTIPART_FRAME_DATA_BYTES = 120;
+const MULTIPART_FRAME_LOOPS = 4;
+const MULTIPART_FRAME_INTERVAL_MS = 200;
 
 export function QrCode({
   allowMultipart = false,
@@ -21,14 +24,18 @@ export function QrCode({
   label,
 }: QrCodeProps) {
   const qrValue = contentType === 'bolt11' ? value.toUpperCase() : value;
-  const frames = useMemo(
-    () =>
-      allowMultipart &&
-      new TextEncoder().encode(qrValue).byteLength > MAX_STATIC_QR_BYTES
-        ? dataToFrames(qrValue)
-        : [qrValue],
-    [allowMultipart, qrValue],
-  );
+  const frames = useMemo(() => {
+    const rawByteLength = new TextEncoder().encode(qrValue).byteLength;
+    const frameData =
+      contentType === 'ecash' ? ecashToQrFrameData(qrValue) : qrValue;
+    return allowMultipart && rawByteLength > MAX_STATIC_QR_BYTES
+      ? dataToFrames(
+          frameData,
+          MULTIPART_FRAME_DATA_BYTES,
+          MULTIPART_FRAME_LOOPS,
+        )
+      : [qrValue];
+  }, [allowMultipart, contentType, qrValue]);
   const [activeFrameState, setActiveFrameState] = useState<{
     frames: string[];
     index: number;
@@ -116,4 +123,11 @@ export function QrCode({
       <img src={result.dataUrl} alt={label} width={280} height={280} />
     </div>
   );
+}
+
+/** Match Fedi's QRLoop boundary: v2 text stays UTF-8; legacy base64 is binary. */
+function ecashToQrFrameData(ecash: string): Buffer {
+  return ecash.startsWith('fedimint')
+    ? Buffer.from(ecash, 'utf8')
+    : Buffer.from(ecash, 'base64');
 }

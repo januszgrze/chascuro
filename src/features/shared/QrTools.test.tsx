@@ -262,19 +262,28 @@ describe('QR tools', () => {
     expect(scanner.controls.stop).toHaveBeenCalledOnce();
   });
 
-  it('releases a repeated static base64 QR that resembles a multipart frame', async () => {
+  it('keeps a repeated multipart frame pending until the payload is complete', async () => {
+    const payload = 'https://example.com/a-slow-multipart-qr-payload';
+    const frames = dataToFrames(payload, 8);
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
-    const staticValue = btoa(String.fromCharCode(0, 0, 2, 0, 1, 1, 2, 3, 4));
     const scanner = await renderActiveScanner();
 
-    await scanner.scan(staticValue);
+    await scanner.scan(frames[0]);
     expect(scanner.onScan).not.toHaveBeenCalled();
 
-    now.mockReturnValue(2_001);
-    await scanner.scan(staticValue);
+    now.mockReturnValue(2_100);
+    await scanner.scan(frames[0]);
+    now.mockRestore();
+    expect(scanner.onScan).not.toHaveBeenCalled();
+
+    for (const frame of frames.slice(1)) {
+      await scanner.scan(frame);
+      if (scanner.onScan.mock.calls.length > 0) {
+        break;
+      }
+    }
 
     expect(scanner.onScan).toHaveBeenCalledOnce();
-    expect(scanner.onScan).toHaveBeenCalledWith(staticValue);
-    now.mockRestore();
+    expect(scanner.onScan).toHaveBeenCalledWith(payload);
   });
 });

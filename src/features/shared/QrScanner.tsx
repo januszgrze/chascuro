@@ -11,8 +11,6 @@ interface QrScannerProps {
   onScan(value: string): void;
 }
 
-const MULTIPART_CONFIRMATION_MS = 1_000;
-
 export function QrScanner({
   disabled = false,
   variant = 'default',
@@ -24,12 +22,8 @@ export function QrScanner({
   const mountedRef = useRef(false);
   const onScanRef = useRef(onScan);
   const assemblyStateRef = useRef<QrAssemblyState>(null);
-  const assemblyCandidateRef = useRef<{
-    confirmed: boolean;
-    firstSeenAt: number;
-    firstValue: string;
-  } | null>(null);
   const [active, setActive] = useState(false);
+  const [assemblyProgress, setAssemblyProgress] = useState(0);
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -45,7 +39,6 @@ export function QrScanner({
       controlsRef.current?.stop();
       controlsRef.current = null;
       assemblyStateRef.current = null;
-      assemblyCandidateRef.current = null;
       stopVideoTracks(video);
     };
   }, []);
@@ -59,7 +52,7 @@ export function QrScanner({
     generationRef.current = generation;
     setError(undefined);
     assemblyStateRef.current = null;
-    assemblyCandidateRef.current = null;
+    setAssemblyProgress(0);
     setActive(true);
     try {
       const [{ ResilientQrReader }, { DecodeHintType }] = await Promise.all([
@@ -101,32 +94,15 @@ export function QrScanner({
             );
             if (assembled.kind === 'pending') {
               assemblyStateRef.current = assembled.state;
-              const candidate = assemblyCandidateRef.current;
-              if (candidate === null) {
-                assemblyCandidateRef.current = {
-                  confirmed: false,
-                  firstSeenAt: Date.now(),
-                  firstValue: rawValue,
-                };
-                return;
-              }
-              if (!candidate.confirmed && candidate.firstValue !== rawValue) {
-                candidate.confirmed = true;
-                return;
-              }
-              if (
-                candidate.confirmed ||
-                Date.now() - candidate.firstSeenAt < MULTIPART_CONFIRMATION_MS
-              ) {
-                return;
-              }
+              setAssemblyProgress(assembled.progress);
+              return;
             }
 
             generationRef.current += 1;
             callbackControls.stop();
             controlsRef.current = null;
             assemblyStateRef.current = null;
-            assemblyCandidateRef.current = null;
+            setAssemblyProgress(0);
             stopVideoTracks(videoRef.current);
             setActive(false);
             onScanRef.current(
@@ -145,7 +121,7 @@ export function QrScanner({
             callbackControls.stop();
             controlsRef.current = null;
             assemblyStateRef.current = null;
-            assemblyCandidateRef.current = null;
+            setAssemblyProgress(0);
             stopVideoTracks(videoRef.current);
             setActive(false);
             setError('The camera could not read a QR code.');
@@ -169,7 +145,7 @@ export function QrScanner({
       controlsRef.current?.stop();
       controlsRef.current = null;
       assemblyStateRef.current = null;
-      assemblyCandidateRef.current = null;
+      setAssemblyProgress(0);
       stopVideoTracks(videoRef.current);
       setActive(false);
       setError('Camera access was denied or is unavailable.');
@@ -181,7 +157,7 @@ export function QrScanner({
     controlsRef.current?.stop();
     controlsRef.current = null;
     assemblyStateRef.current = null;
-    assemblyCandidateRef.current = null;
+    setAssemblyProgress(0);
     stopVideoTracks(videoRef.current);
     setActive(false);
   }
@@ -205,6 +181,7 @@ export function QrScanner({
           <span className="chat-scan-corner is-tr" aria-hidden="true" />
           <span className="chat-scan-corner is-bl" aria-hidden="true" />
           <span className="chat-scan-corner is-br" aria-hidden="true" />
+          <QrScanProgress value={assemblyProgress} />
           {!active && (
             <button
               className="chat-scan-start"
@@ -234,6 +211,7 @@ export function QrScanner({
           muted
           playsInline
         />
+        <QrScanProgress value={assemblyProgress} />
         {!active && (
           <>
             <p
@@ -259,13 +237,16 @@ export function QrScanner({
 
   return (
     <div className="qr-scanner">
-      <video
-        ref={videoRef}
-        aria-label="QR camera preview"
-        hidden={!active}
-        muted
-        playsInline
-      />
+      <div className="qr-scanner-viewport">
+        <video
+          ref={videoRef}
+          aria-label="QR camera preview"
+          hidden={!active}
+          muted
+          playsInline
+        />
+        <QrScanProgress value={assemblyProgress} />
+      </div>
       {error !== undefined && (
         <p className="fine-print" role="status">
           {error}
@@ -279,6 +260,31 @@ export function QrScanner({
       >
         {active ? 'Stop camera' : 'Scan QR with camera'}
       </button>
+    </div>
+  );
+}
+
+function QrScanProgress({ value }: { value: number }) {
+  if (value <= 0) {
+    return null;
+  }
+
+  const percent = Math.max(1, Math.min(100, Math.round(value * 100)));
+  return (
+    <div
+      className="qr-scan-progress"
+      role="progressbar"
+      aria-label="Multipart QR scan progress"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={percent}
+    >
+      <span
+        className="qr-scan-progress-fill"
+        style={{ width: `${percent}%` }}
+        aria-hidden="true"
+      />
+      <span className="qr-scan-progress-label">{percent}%</span>
     </div>
   );
 }

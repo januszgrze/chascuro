@@ -901,6 +901,7 @@ function EcashRecoverySheet({
         </p>
         <QrCode
           allowMultipart
+          contentType="ecash"
           value={notes}
           label="Unsent ecash recovery QR code"
         />
