@@ -48,6 +48,7 @@
     "@zxing/library": "0.23.0",
     "idb": "8.0.3",
     "qrcode": "1.5.4",
+    "qrloop": "1.4.1",
     "react": "19.2.7",
     "react-dom": "19.2.7"
   },
