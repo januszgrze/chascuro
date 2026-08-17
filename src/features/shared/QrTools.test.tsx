@@ -19,8 +19,28 @@ const scannerMock = vi.hoisted(() => ({
   decodeFromConstraints: vi.fn(),
 }));
 
+const cameraPreferenceStorage = new Map<string, string>();
+
 vi.mock('@zxing/browser', () => ({
   BrowserQRCodeReader: class {
+    options: {
+      delayBetweenScanAttempts: number;
+      delayBetweenScanSuccess: number;
+    };
+
+    constructor(
+      _hints?: unknown,
+      options: {
+        delayBetweenScanAttempts?: number;
+        delayBetweenScanSuccess?: number;
+      } = {},
+    ) {
+      this.options = {
+        delayBetweenScanAttempts: options.delayBetweenScanAttempts ?? 500,
+        delayBetweenScanSuccess: options.delayBetweenScanSuccess ?? 500,
+      };
+    }
+
     decodeFromCanvas(canvas: HTMLCanvasElement) {
       return scannerMock.decodeFromCanvas(canvas);
     }
@@ -36,8 +56,8 @@ interface TestScannerControls {
 }
 
 type TestScanCallback = (
-  result: { getText(): string },
-  error: undefined,
+  result: { getText(): string } | undefined,
+  error: Error | undefined,
   controls: TestScannerControls,
 ) => void;
 
@@ -66,6 +86,11 @@ async function renderActiveScanner() {
         scanCallback?.({ getText: () => value }, undefined, controls);
       });
     },
+    async fail(error: Error) {
+      await act(async () => {
+        scanCallback?.(undefined, error, controls);
+      });
+    },
   };
 }
 
@@ -73,6 +98,16 @@ describe('QR tools', () => {
   beforeEach(() => {
     scannerMock.decodeFromCanvas.mockReset();
     scannerMock.decodeFromConstraints.mockReset();
+    cameraPreferenceStorage.clear();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (key: string) => cameraPreferenceStorage.get(key) ?? null,
+        setItem: (key: string, value: string) =>
+          cameraPreferenceStorage.set(key, value),
+        removeItem: (key: string) => cameraPreferenceStorage.delete(key),
+      },
+    });
   });
 
   it('renders a local data URL without exposing the payload as text', async () => {
@@ -156,7 +191,19 @@ describe('QR tools', () => {
     expect(() => reader.decodeFromCanvas(canvas)).toThrow(NotFoundException);
   });
 
-  it('never starts scanning or submits a payload without an explicit tap', () => {
+  it('keeps browser canvas frame failures retryable', () => {
+    scannerMock.decodeFromCanvas.mockImplementation(() => {
+      throw new DOMException('Frame is temporarily unavailable.');
+    });
+    const reader = new ResilientQrReader();
+    const canvas = document.createElement('canvas');
+    canvas.width = 100;
+    canvas.height = 100;
+
+    expect(() => reader.decodeFromCanvas(canvas)).toThrow(NotFoundException);
+  });
+
+  it('requires an explicit tap before the first successful camera start', () => {
     const onScan = vi.fn();
     render(<QrScanner onScan={onScan} />);
 
@@ -165,6 +212,64 @@ describe('QR tools', () => {
     ).toBeVisible();
     expect(screen.getByLabelText('QR camera preview')).not.toBeVisible();
     expect(onScan).not.toHaveBeenCalled();
+  });
+
+  it('keeps production-minified ZXing misses retryable', async () => {
+    const scanner = await renderActiveScanner();
+    const frameMiss = new NotFoundException();
+    Object.defineProperty(frameMiss, 'name', { value: 't' });
+
+    await scanner.fail(frameMiss);
+
+    expect(scannerMock.decodeFromConstraints).toHaveBeenCalledTimes(1);
+    expect(scanner.controls.stop).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Stop camera' })).toBeVisible();
+  });
+
+  it('remembers camera access and starts on the next scanner screen', async () => {
+    const controls = [{ stop: vi.fn() }, { stop: vi.fn() }];
+    scannerMock.decodeFromConstraints
+      .mockResolvedValueOnce(controls[0])
+      .mockResolvedValueOnce(controls[1]);
+    const first = render(<QrScanner onScan={vi.fn()} />);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Scan QR with camera' }),
+    );
+    await waitFor(() =>
+      expect(scannerMock.decodeFromConstraints).toHaveBeenCalledTimes(1),
+    );
+    first.unmount();
+
+    render(<QrScanner onScan={vi.fn()} />);
+    await waitFor(() =>
+      expect(scannerMock.decodeFromConstraints).toHaveBeenCalledTimes(2),
+    );
+
+    expect(screen.getByRole('button', { name: 'Stop camera' })).toBeVisible();
+  });
+
+  it('stops auto-starting after the user stops the camera', async () => {
+    const controls = { stop: vi.fn() };
+    scannerMock.decodeFromConstraints.mockResolvedValue(controls);
+    const first = render(<QrScanner onScan={vi.fn()} />);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Scan QR with camera' }),
+    );
+    await waitFor(() =>
+      expect(scannerMock.decodeFromConstraints).toHaveBeenCalledTimes(1),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Stop camera' }));
+    first.unmount();
+
+    render(<QrScanner onScan={vi.fn()} />);
+    await Promise.resolve();
+
+    expect(scannerMock.decodeFromConstraints).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByRole('button', { name: 'Scan QR with camera' }),
+    ).toBeVisible();
   });
 
   it('stops camera controls that arrive after the user cancels startup', async () => {
@@ -285,5 +390,54 @@ describe('QR tools', () => {
 
     expect(scanner.onScan).toHaveBeenCalledOnce();
     expect(scanner.onScan).toHaveBeenCalledWith(payload);
+  });
+
+  it('waits for video dimensions and retries capture failures in one loop', async () => {
+    vi.useFakeTimers();
+    const drawImage = vi.fn(() => {
+      throw new DOMException('Frame is temporarily unavailable.');
+    });
+    const getContext = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue({ drawImage } as unknown as CanvasRenderingContext2D);
+    let readyState: number = HTMLMediaElement.HAVE_METADATA;
+    let videoWidth = 0;
+    let videoHeight = 0;
+    const video = document.createElement('video');
+    Object.defineProperties(video, {
+      readyState: { configurable: true, get: () => readyState },
+      videoWidth: { configurable: true, get: () => videoWidth },
+      videoHeight: { configurable: true, get: () => videoHeight },
+    });
+    const callback = vi.fn();
+    const finalize = vi.fn();
+    const reader = new ResilientQrReader(undefined, {
+      delayBetweenScanAttempts: 10,
+    });
+
+    try {
+      const controls = reader.scan(video, callback, finalize);
+      expect(callback).not.toHaveBeenCalled();
+
+      readyState = HTMLMediaElement.HAVE_CURRENT_DATA;
+      videoWidth = 640;
+      videoHeight = 480;
+      await act(async () => vi.advanceTimersByTimeAsync(10));
+
+      expect(drawImage).toHaveBeenCalledOnce();
+      expect(callback).toHaveBeenCalledWith(
+        undefined,
+        expect.any(NotFoundException),
+        controls,
+      );
+      expect(finalize).not.toHaveBeenCalled();
+
+      controls.stop();
+      controls.stop();
+      expect(finalize).toHaveBeenCalledOnce();
+    } finally {
+      getContext.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });

@@ -1,5 +1,12 @@
-import { BrowserQRCodeReader } from '@zxing/browser';
+import {
+  BrowserQRCodeReader,
+  type HTMLVisualMediaElement,
+  type IScannerControls,
+} from '@zxing/browser';
 import { Exception, NotFoundException, type Result } from '@zxing/library';
+
+type ScanCallback = Parameters<BrowserQRCodeReader['scan']>[1];
+type FinalizeCallback = Parameters<BrowserQRCodeReader['scan']>[2];
 
 /**
  * Keeps malformed intermediate camera frames retryable and prioritizes the
@@ -8,19 +15,125 @@ import { Exception, NotFoundException, type Result } from '@zxing/library';
 export class ResilientQrReader extends BrowserQRCodeReader {
   private centeredCanvas?: HTMLCanvasElement;
 
+  /**
+   * ZXing's stock loop permanently sizes its canvas from the first video frame
+   * and finalizes the media stream after any non-ZXing exception. Keep transient
+   * video/canvas failures retryable while the camera track is still live.
+   */
+  override scan(
+    element: HTMLVisualMediaElement,
+    callback: ScanCallback,
+    finalize?: FinalizeCallback,
+  ): IScannerControls {
+    let captureCanvas: HTMLCanvasElement | undefined;
+    let captureContext: CanvasRenderingContext2D | undefined;
+    let timeoutId: number | undefined;
+    let stopped = false;
+    let finalized = false;
+
+    const disposeCanvas = (): void => {
+      captureContext = undefined;
+      captureCanvas = undefined;
+    };
+    const finish = (error?: Error): void => {
+      if (finalized) {
+        return;
+      }
+      finalized = true;
+      stopped = true;
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+      disposeCanvas();
+      finalize?.(error);
+    };
+    const controls: IScannerControls = {
+      stop: () => finish(),
+    };
+    const schedule = (delayMs: number): void => {
+      if (!stopped) {
+        timeoutId = window.setTimeout(scanFrame, delayMs);
+      }
+    };
+
+    const scanFrame = (): void => {
+      if (stopped) {
+        return;
+      }
+
+      if (hasEndedVideoTrack(element)) {
+        const error = new Exception('Camera stream ended.');
+        callback(undefined, error, controls);
+        finish(error);
+        return;
+      }
+
+      const dimensions = readyDimensions(element);
+      if (dimensions === undefined) {
+        schedule(this.options.delayBetweenScanAttempts);
+        return;
+      }
+
+      try {
+        if (
+          captureCanvas === undefined ||
+          captureCanvas.width !== dimensions.width ||
+          captureCanvas.height !== dimensions.height
+        ) {
+          captureCanvas = document.createElement('canvas');
+          captureCanvas.width = dimensions.width;
+          captureCanvas.height = dimensions.height;
+          captureContext = getCaptureContext(captureCanvas);
+        }
+        if (captureContext === undefined || captureCanvas === undefined) {
+          throw new Error('Canvas capture is unavailable.');
+        }
+
+        captureContext.drawImage(
+          element,
+          0,
+          0,
+          dimensions.width,
+          dimensions.height,
+        );
+        const result = this.decodeFromCanvas(captureCanvas);
+        callback(result, undefined, controls);
+        schedule(this.options.delayBetweenScanSuccess);
+      } catch {
+        if (hasEndedVideoTrack(element)) {
+          const error = new Exception('Camera stream ended.');
+          callback(undefined, error, controls);
+          finish(error);
+          return;
+        }
+
+        callback(undefined, NotFoundException.getNotFoundInstance(), controls);
+        schedule(this.options.delayBetweenScanAttempts);
+      }
+    };
+
+    scanFrame();
+    return controls;
+  }
+
   override decodeFromCanvas(source: HTMLCanvasElement): Result {
-    const centered = this.centerSquare(source);
+    let centered: HTMLCanvasElement;
+    try {
+      centered = this.centerSquare(source);
+    } catch {
+      return retryFrameDecode();
+    }
     try {
       return super.decodeFromCanvas(centered);
-    } catch (centeredError) {
+    } catch {
       if (centered !== source) {
         try {
           return super.decodeFromCanvas(source);
-        } catch (fullFrameError) {
-          return retryZxingError(fullFrameError);
+        } catch {
+          return retryFrameDecode();
         }
       }
-      return retryZxingError(centeredError);
+      return retryFrameDecode();
     }
   }
 
@@ -53,9 +166,47 @@ export class ResilientQrReader extends BrowserQRCodeReader {
   }
 }
 
-function retryZxingError(error: unknown): never {
-  if (error instanceof Exception) {
-    throw NotFoundException.getNotFoundInstance();
+function retryFrameDecode(): never {
+  throw NotFoundException.getNotFoundInstance();
+}
+
+function readyDimensions(
+  element: HTMLVisualMediaElement,
+): { width: number; height: number } | undefined {
+  if (element instanceof HTMLVideoElement) {
+    if (
+      element.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+      element.videoWidth <= 0 ||
+      element.videoHeight <= 0
+    ) {
+      return undefined;
+    }
+    return { width: element.videoWidth, height: element.videoHeight };
   }
-  throw error;
+
+  const width = element.naturalWidth || element.width;
+  const height = element.naturalHeight || element.height;
+  return width > 0 && height > 0 ? { width, height } : undefined;
+}
+
+function hasEndedVideoTrack(element: HTMLVisualMediaElement): boolean {
+  if (!(element instanceof HTMLVideoElement)) {
+    return false;
+  }
+  const stream = element.srcObject;
+  if (typeof MediaStream === 'undefined' || !(stream instanceof MediaStream)) {
+    return false;
+  }
+  const track = stream.getVideoTracks()[0];
+  return track !== undefined && track.readyState === 'ended';
+}
+
+function getCaptureContext(
+  canvas: HTMLCanvasElement,
+): CanvasRenderingContext2D | undefined {
+  try {
+    return canvas.getContext('2d', { willReadFrequently: true }) ?? undefined;
+  } catch {
+    return canvas.getContext('2d') ?? undefined;
+  }
 }

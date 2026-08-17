@@ -67,11 +67,14 @@
   from snapshots and generic errors, and are cleared on the main navigation and
   lock paths. JavaScript memory clearing remains best-effort.
 - Oversized bearer ecash is rendered as local multipart QR frames using the
-  interoperable UTF-8/binary ecash boundary. QR scanning starts only after an
-  explicit user action, prefers the rear camera, reports checksum-independent
-  frame progress, collects recognized multipart frames until their checksum is
-  valid, stops after one complete candidate, and never submits the result
-  automatically.
+  interoperable UTF-8/binary ecash boundary. The first camera start requires an
+  explicit user action; after successful access, a local boolean preference
+  automatically starts the camera on scanner screens until the user stops it or
+  camera startup fails. Scanning prefers the rear camera, retains one live
+  stream across transient frame failures, reports checksum-independent frame
+  progress, collects multipart frames until their checksum is valid, and never
+  submits the result automatically. Navigation, unmount, and wallet lock stop
+  the camera stream.
 - Logs accept allowlisted event codes and coarse error classes only.
 - The service worker precaches static build output and defines no runtime
   federation, invoice, e-cash, or payment cache.
