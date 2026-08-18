@@ -65,9 +65,6 @@ describe('Federation onboarding screens', () => {
     expect(onPreview).not.toHaveBeenCalled();
 
     scanner.payload = 'fed1example';
-    await user.click(
-      screen.getByRole('button', { name: 'Scan federation invite' }),
-    );
     await user.click(screen.getByRole('button', { name: 'Scan test QR' }));
     expect(screen.getByLabelText('Federation invite')).toHaveValue(
       'fed1example',

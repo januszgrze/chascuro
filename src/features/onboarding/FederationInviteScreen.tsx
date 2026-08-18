@@ -33,7 +33,6 @@ export function FederationInviteScreen({
   }
 
   function scanInvite(value: string) {
-    setScanning(false);
     try {
       const classified = classifyWalletInput(value);
       if (classified.kind !== 'federation_invite') {
@@ -42,6 +41,7 @@ export function FederationInviteScreen({
       }
       setScanError(undefined);
       setInviteCode(classified.input);
+      setScanning(false);
     } catch {
       setScanError('That QR code is not a valid federation invite.');
     }

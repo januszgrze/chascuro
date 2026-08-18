@@ -1,14 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { IScannerControls } from '@zxing/browser';
 
 import { RefreshIcon } from './icons';
+import { assembleQrValue, type QrAssemblyState } from './QrPayloadAssembler';
 
 interface QrScannerProps {
   disabled?: boolean;
   variant?: 'default' | 'framed' | 'chat';
   onScan(value: string): void;
 }
+
+const CAMERA_AUTO_START_KEY = 'chascuro.camera-auto-start.v1';
 
 export function QrScanner({
   disabled = false,
@@ -20,7 +23,9 @@ export function QrScanner({
   const generationRef = useRef(0);
   const mountedRef = useRef(false);
   const onScanRef = useRef(onScan);
+  const assemblyStateRef = useRef<QrAssemblyState>(null);
   const [active, setActive] = useState(false);
+  const [assemblyProgress, setAssemblyProgress] = useState(0);
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -35,100 +40,174 @@ export function QrScanner({
       generationRef.current += 1;
       controlsRef.current?.stop();
       controlsRef.current = null;
+      assemblyStateRef.current = null;
       stopVideoTracks(video);
     };
   }, []);
 
-  async function start() {
-    if (disabled || active || videoRef.current === null) {
-      return;
-    }
+  const isCurrentGeneration = useCallback(
+    (generation: number): boolean =>
+      mountedRef.current && generationRef.current === generation,
+    [],
+  );
 
-    const generation = generationRef.current + 1;
-    generationRef.current = generation;
-    setError(undefined);
-    setActive(true);
-    try {
-      const { BrowserQRCodeReader } = await import('@zxing/browser');
-      if (!isCurrentGeneration(generation)) {
-        stopVideoTracks(videoRef.current);
+  const start = useCallback(
+    async (rememberConsent = true) => {
+      if (disabled || active || videoRef.current === null) {
         return;
       }
 
-      const reader = new BrowserQRCodeReader(undefined, {
-        delayBetweenScanAttempts: 150,
-      });
-      const controls = await reader.decodeFromConstraints(
-        {
-          audio: false,
-          video: {
-            facingMode: { ideal: 'environment' },
+      const generation = generationRef.current + 1;
+      generationRef.current = generation;
+      setError(undefined);
+      assemblyStateRef.current = null;
+      setAssemblyProgress(0);
+      setActive(true);
+      try {
+        const [
+          { ResilientQrReader },
+          {
+            ChecksumException,
+            DecodeHintType,
+            FormatException,
+            NotFoundException,
           },
-        },
-        videoRef.current,
-        (result, scanError, callbackControls) => {
+        ] = await Promise.all([
+          import('./ResilientQrReader'),
+          import('@zxing/library'),
+        ]);
+        if (!isCurrentGeneration(generation)) {
+          stopVideoTracks(videoRef.current);
+          return;
+        }
+
+        const hints = new Map([[DecodeHintType.TRY_HARDER, true]]);
+        const reader = new ResilientQrReader(hints, {
+          delayBetweenScanAttempts: 150,
+          delayBetweenScanSuccess: 100,
+        });
+        try {
+          const controls = await reader.decodeFromConstraints(
+            {
+              audio: false,
+              video: {
+                facingMode: { ideal: 'environment' },
+                width: { ideal: 1920 },
+                height: { ideal: 1080 },
+              },
+            },
+            videoRef.current,
+            (result, scanError, callbackControls) => {
+              if (!isCurrentGeneration(generation)) {
+                callbackControls.stop();
+                stopVideoTracks(videoRef.current);
+                return;
+              }
+
+              if (result !== undefined) {
+                if (rememberConsent) {
+                  rememberCameraAutoStart();
+                }
+                const rawValue = result.getText();
+                const assembled = assembleQrValue(
+                  assemblyStateRef.current,
+                  rawValue,
+                );
+                if (assembled.kind === 'pending') {
+                  assemblyStateRef.current = assembled.state;
+                  setAssemblyProgress(assembled.progress);
+                  return;
+                }
+
+                generationRef.current += 1;
+                callbackControls.stop();
+                controlsRef.current = null;
+                assemblyStateRef.current = null;
+                setAssemblyProgress(0);
+                stopVideoTracks(videoRef.current);
+                setActive(false);
+                onScanRef.current(
+                  assembled.kind === 'complete' ? assembled.value : rawValue,
+                );
+                return;
+              }
+
+              if (
+                scanError === undefined ||
+                scanError instanceof NotFoundException ||
+                scanError instanceof ChecksumException ||
+                scanError instanceof FormatException
+              ) {
+                return;
+              }
+
+              failScan('The camera could not read a QR code.');
+            },
+          );
+
           if (!isCurrentGeneration(generation)) {
-            callbackControls.stop();
+            controls.stop();
             stopVideoTracks(videoRef.current);
             return;
           }
-
-          if (result !== undefined) {
-            const value = result.getText();
-            generationRef.current += 1;
-            callbackControls.stop();
-            controlsRef.current = null;
+          if (rememberConsent) {
+            rememberCameraAutoStart();
+          }
+          controlsRef.current = controls;
+        } catch {
+          if (!isCurrentGeneration(generation)) {
             stopVideoTracks(videoRef.current);
-            setActive(false);
-            onScanRef.current(value);
             return;
           }
+          failScan('Camera access was denied or is unavailable.');
+        }
 
-          if (
-            scanError !== undefined &&
-            scanError.name !== 'NotFoundException'
-          ) {
-            generationRef.current += 1;
-            callbackControls.stop();
-            controlsRef.current = null;
-            stopVideoTracks(videoRef.current);
-            setActive(false);
-            setError('The camera could not read a QR code.');
-          }
-        },
-      );
+        function failScan(message: string): void {
+          generationRef.current += 1;
+          controlsRef.current?.stop();
+          controlsRef.current = null;
+          assemblyStateRef.current = null;
+          setAssemblyProgress(0);
+          forgetCameraAutoStart();
+          stopVideoTracks(videoRef.current);
+          setActive(false);
+          setError(message);
+        }
+      } catch {
+        if (!isCurrentGeneration(generation)) {
+          stopVideoTracks(videoRef.current);
+          return;
+        }
 
-      if (!isCurrentGeneration(generation)) {
-        controls.stop();
+        generationRef.current += 1;
+        controlsRef.current?.stop();
+        controlsRef.current = null;
+        assemblyStateRef.current = null;
+        setAssemblyProgress(0);
+        forgetCameraAutoStart();
         stopVideoTracks(videoRef.current);
-        return;
+        setActive(false);
+        setError('Camera access was denied or is unavailable.');
       }
-      controlsRef.current = controls;
-    } catch {
-      if (!isCurrentGeneration(generation)) {
-        stopVideoTracks(videoRef.current);
-        return;
-      }
+    },
+    [active, disabled, isCurrentGeneration],
+  );
 
-      generationRef.current += 1;
-      controlsRef.current?.stop();
-      controlsRef.current = null;
-      stopVideoTracks(videoRef.current);
-      setActive(false);
-      setError('Camera access was denied or is unavailable.');
+  useEffect(() => {
+    if (!disabled && shouldAutoStartCamera()) {
+      void start(false);
     }
-  }
+  }, [disabled, start]);
 
   function stop() {
     generationRef.current += 1;
     controlsRef.current?.stop();
     controlsRef.current = null;
+    assemblyStateRef.current = null;
+    setAssemblyProgress(0);
+    forgetCameraAutoStart();
     stopVideoTracks(videoRef.current);
     setActive(false);
-  }
-
-  function isCurrentGeneration(generation: number): boolean {
-    return mountedRef.current && generationRef.current === generation;
   }
 
   if (variant === 'chat') {
@@ -146,6 +225,7 @@ export function QrScanner({
           <span className="chat-scan-corner is-tr" aria-hidden="true" />
           <span className="chat-scan-corner is-bl" aria-hidden="true" />
           <span className="chat-scan-corner is-br" aria-hidden="true" />
+          <QrScanProgress value={assemblyProgress} />
           {!active && (
             <button
               className="chat-scan-start"
@@ -175,6 +255,7 @@ export function QrScanner({
           muted
           playsInline
         />
+        <QrScanProgress value={assemblyProgress} />
         {!active && (
           <>
             <p
@@ -200,13 +281,16 @@ export function QrScanner({
 
   return (
     <div className="qr-scanner">
-      <video
-        ref={videoRef}
-        aria-label="QR camera preview"
-        hidden={!active}
-        muted
-        playsInline
-      />
+      <div className="qr-scanner-viewport">
+        <video
+          ref={videoRef}
+          aria-label="QR camera preview"
+          hidden={!active}
+          muted
+          playsInline
+        />
+        <QrScanProgress value={assemblyProgress} />
+      </div>
       {error !== undefined && (
         <p className="fine-print" role="status">
           {error}
@@ -222,6 +306,55 @@ export function QrScanner({
       </button>
     </div>
   );
+}
+
+function QrScanProgress({ value }: { value: number }) {
+  if (value <= 0) {
+    return null;
+  }
+
+  const percent = Math.max(1, Math.min(100, Math.round(value * 100)));
+  return (
+    <div
+      className="qr-scan-progress"
+      role="progressbar"
+      aria-label="Multipart QR scan progress"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={percent}
+    >
+      <span
+        className="qr-scan-progress-fill"
+        style={{ width: `${percent}%` }}
+        aria-hidden="true"
+      />
+      <span className="qr-scan-progress-label">{percent}%</span>
+    </div>
+  );
+}
+
+function shouldAutoStartCamera(): boolean {
+  try {
+    return window.localStorage.getItem(CAMERA_AUTO_START_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function rememberCameraAutoStart(): void {
+  try {
+    window.localStorage.setItem(CAMERA_AUTO_START_KEY, 'true');
+  } catch {
+    // Camera scanning still works when persistent browser storage is blocked.
+  }
+}
+
+function forgetCameraAutoStart(): void {
+  try {
+    window.localStorage.removeItem(CAMERA_AUTO_START_KEY);
+  } catch {
+    // There is no stored preference to clear when storage is unavailable.
+  }
 }
 
 function stopVideoTracks(video: HTMLVideoElement | null): void {
