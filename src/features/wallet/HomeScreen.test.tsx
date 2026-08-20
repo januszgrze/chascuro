@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   clearableSecretText,
+  clientName,
   createWalletOperation,
   federationId,
   lnurlPayOfferId,
@@ -21,6 +22,7 @@ import {
   satsToMsats,
   secretMnemonic,
   secretRecordRef,
+  type ActiveFederation,
   type OperationDirection,
   type OperationGuidanceCode,
   type OperationKind,
@@ -58,10 +60,23 @@ vi.mock('../shared/QrCode', () => ({
   ),
 }));
 
+const TEST_FEDERATION_ID = federationId('test-federation');
+const TEST_FEDERATION: ActiveFederation = Object.freeze({
+  federationId: TEST_FEDERATION_ID,
+  displayName: 'Test mint',
+  network: 'signet',
+  modules: Object.freeze(['mint', 'ln']),
+  guardianCount: 4,
+  clientName: clientName('dd5135b2-c228-41b7-a4f9-3b6e7afe3088'),
+  joinedAtMs: 1,
+});
+
 const SNAPSHOT: WalletSnapshot = {
   serviceKind: 'fake',
   lifecycle: 'ready',
   connection: 'online',
+  activeFederation: TEST_FEDERATION,
+  federations: [{ federation: TEST_FEDERATION, balanceMsats: msats(0n) }],
   balanceMsats: msats(0n),
   operations: [],
   capabilities: {
@@ -126,8 +141,6 @@ function renderHome(overrides: Partial<HomeProps> = {}) {
   render(<HomeScreen {...props} />);
   return props;
 }
-
-const TEST_FEDERATION_ID = federationId('test-federation');
 
 function walletOperation({
   id,
@@ -343,7 +356,7 @@ describe('HomeScreen scanned wallet input', () => {
     await user.click(screen.getByRole('button', { name: 'Review payment' }));
 
     expect(onQuoteLnurlPayment).toHaveBeenCalledWith(offer.offerId, '50', '10');
-    expect(screen.getByRole('heading', { name: 'Pay invoice' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Pay' })).toBeVisible();
     expect(screen.getByText('alice@example.com')).toBeVisible();
     expect(props.onPayLightningQuote).not.toHaveBeenCalled();
   });
@@ -450,16 +463,16 @@ describe('HomeScreen scanned wallet input', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Continue' }));
     await user.click(screen.getByRole('button', { name: 'Review payment' }));
-    await user.click(screen.getByRole('button', { name: /Pay.*100/ }));
+    await user.click(screen.getByRole('button', { name: 'Pay invoice' }));
 
     // A submitted payment no longer shows a separate pending screen: the
     // review screen stays put with the Pay button in its in-flight state until
     // the payment settles.
-    expect(screen.getByRole('heading', { name: 'Pay invoice' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Pay' })).toBeVisible();
     expect(
       screen.queryByRole('heading', { name: 'Payment pending' }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Pay.*100/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Pay invoice' })).toBeDisabled();
     expect(screen.queryByText('Thanks, paid!')).not.toBeInTheDocument();
 
     const settled = walletOperation({
@@ -558,6 +571,7 @@ describe('HomeScreen Lightning receive', () => {
     await user.click(screen.getByRole('button', { name: '1' }));
     await user.click(screen.getByRole('button', { name: '0' }));
     await user.click(screen.getByRole('button', { name: '0' }));
+    await user.click(screen.getByRole('button', { name: 'Review receive' }));
     await user.click(screen.getByRole('button', { name: 'Create invoice' }));
 
     expect(
@@ -623,6 +637,7 @@ describe('HomeScreen Lightning receive', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Receive' }));
     fireEvent.click(screen.getByRole('button', { name: 'Lightning' }));
     fireEvent.click(screen.getByRole('button', { name: '1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Review receive' }));
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Create invoice' }));
       await Promise.resolve();
@@ -641,6 +656,34 @@ describe('HomeScreen Lightning receive', () => {
       screen.getByText('Invoice expired or no longer payable.'),
     ).toBeVisible();
     expect(invoice.length).toBe(0);
+  });
+
+  it('reviews the Lightning amount before creating the invoice', async () => {
+    const user = userEvent.setup();
+    const onCreateLightningInvoice = vi.fn();
+    renderHome({ onCreateLightningInvoice });
+
+    await user.click(screen.getByRole('button', { name: 'Receive' }));
+    await user.click(screen.getByRole('button', { name: 'Lightning' }));
+    await user.click(screen.getByRole('button', { name: '1' }));
+    await user.click(screen.getByRole('button', { name: '0' }));
+    await user.click(screen.getByRole('button', { name: '0' }));
+    await user.click(screen.getByRole('button', { name: 'Review receive' }));
+
+    expect(screen.getByRole('heading', { name: 'Receive' })).toBeVisible();
+    expect(
+      screen.getByRole('button', { name: /Receive to/ }),
+    ).toBeVisible();
+    expect(onCreateLightningInvoice).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: /Receive to/ }));
+    expect(screen.getByRole('heading', { name: 'Choose a mint' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    expect(
+      screen.getByRole('button', { name: 'Create invoice' }),
+    ).toBeVisible();
+    expect(onCreateLightningInvoice).not.toHaveBeenCalled();
   });
 });
 
@@ -852,7 +895,7 @@ describe('HomeScreen settings and secret-storage warnings', () => {
 
     expect(screen.queryByText('gravity')).not.toBeInTheDocument();
     expect(() => mnemonic.reveal()).toThrow();
-    expect(screen.getByText('Federation', { selector: 'dt' })).toBeVisible();
+    expect(screen.getByText(/Your mints/)).toBeVisible();
   });
 
   it('clears a recovery phrase that arrives after the seed section closes', async () => {
@@ -944,6 +987,7 @@ describe('HomeScreen settings and secret-storage warnings', () => {
     await user.click(screen.getByRole('button', { name: 'Review send' }));
     expect(screen.getByRole('heading', { name: 'Send' })).toBeInTheDocument();
     expect(screen.getByText('12')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Pay from/ })).toBeVisible();
     expect(onCreateEcashSpend).not.toHaveBeenCalled();
 
     // Back returns to the keypad with the amount preserved, still unminted.

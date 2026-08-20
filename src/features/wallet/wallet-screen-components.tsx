@@ -98,6 +98,7 @@ export function ResultScreen({
   onBack,
   error,
   hold = false,
+  icon,
   children,
 }: {
   titleId: string;
@@ -114,6 +115,7 @@ export function ResultScreen({
    * the shared elements stay put instead of re-animating.
    */
   hold?: boolean;
+  icon?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -136,11 +138,12 @@ export function ResultScreen({
       <div className="result-body">
         <div className="result-group">
           <div className={`result-icon result-icon--${tone}`}>
-            {direction === 'in' ? (
-              <ArrowDownIcon size={52} />
-            ) : (
-              <ArrowUpIcon size={52} />
-            )}
+            {icon ??
+              (direction === 'in' ? (
+                <ArrowDownIcon size={52} />
+              ) : (
+                <ArrowUpIcon size={52} />
+              ))}
           </div>
           <div className="result-copy">
             <h1 id={titleId} className="result-title">

@@ -1,8 +1,5 @@
-import {
-  WalletDirector,
-  type FedimintWallet,
-  type GatewayInfo,
-} from '@fedimint/core';
+import { WalletDirector, type GatewayInfo } from '@fedimint/core';
+import { FedimintWallet } from '@fedimint/core/testing';
 import { WasmWorkerTransport } from '@fedimint/transport-web';
 
 import {
@@ -72,15 +69,16 @@ import {
   trackedOperation,
   type SdkOperationFlow,
 } from './fedimint-wallet-helpers';
-import type {
-  OpenWalletInput,
-  OperationCursor,
-  OperationListener,
-  OperationPage,
-  ReconciliationResult,
-  WalletService,
-  WalletSnapshot,
-  WalletSnapshotListener,
+import {
+  resolveOpenFederations,
+  type OpenWalletInput,
+  type OperationCursor,
+  type OperationListener,
+  type OperationPage,
+  type ReconciliationResult,
+  type WalletService,
+  type WalletSnapshot,
+  type WalletSnapshotListener,
 } from './wallet-service';
 
 export {
@@ -96,9 +94,9 @@ export {
   sanitizeSdkOperation,
 } from './fedimint-wallet-helpers';
 
-// In SDK 0.1.3, services are constructed against this default name even when
-// open/join receives a custom name. Keep the compatibility spike on one client
-// until the SDK exposes a consistently client-scoped constructor.
+// SDK 0.1.3 keys RPCs by a 36-char UUID clientName. Existing wallets stay on
+// this default; additional mints use a new UUID. The constructor is only a
+// runtime export from `@fedimint/core/testing` in this SDK version.
 export const SDK_DEFAULT_CLIENT_NAME = 'dd5135b2-c228-41b7-a4f9-3b6e7afe3088';
 
 /**
@@ -111,6 +109,21 @@ class FedimintWebWalletDirector extends WalletDirector {
     await this.initialize();
     return this._client.sendSingleMessage('parse_bolt11_invoice', { invoice });
   }
+
+  createNamedWallet(name: string): FedimintWallet {
+    return new FedimintWallet(this._client, name);
+  }
+
+  async dispose(): Promise<void> {
+    await this._client.cleanup();
+  }
+}
+
+interface OpenClient {
+  federation: ActiveFederation;
+  wallet: FedimintWallet;
+  balanceMsats: Msats;
+  cancelBalance?: () => void;
 }
 
 interface PendingCandidate {
@@ -165,6 +178,8 @@ export class FedimintWalletService implements WalletService {
       this.reconcilePendingJoin(pending, signal),
     getCapabilities: (signal?: AbortSignal): Promise<FederationCapabilities> =>
       this.getCapabilities(signal),
+    select: (federationId: ActiveFederation['federationId']): Promise<void> =>
+      this.selectFederation(federationId),
   };
 
   readonly balance = {
@@ -266,7 +281,8 @@ export class FedimintWalletService implements WalletService {
   private readonly recoveryListeners = new Set<RecoveryListener>();
   private director: FedimintWebWalletDirector | undefined;
   private wallet: FedimintWallet | undefined;
-  private cancelBalanceSubscription: (() => void) | undefined;
+  private readonly clients = new Map<string, OpenClient>();
+  private selectedId: string | undefined;
   private cancelRecoverySubscription: (() => void) | undefined;
   private joinInFlight:
     | {
@@ -279,6 +295,7 @@ export class FedimintWalletService implements WalletService {
   private snapshot = this.makeSnapshot({
     lifecycle: 'closed',
     connection: 'offline',
+    federations: [],
     balanceMsats: msats(0n),
   });
 
@@ -288,9 +305,10 @@ export class FedimintWalletService implements WalletService {
     }
 
     const generation = ++this.generation;
-    let createdWallet: FedimintWallet | undefined;
+    const federations = resolveOpenFederations(input);
+    let director: FedimintWebWalletDirector | undefined;
     let handedToService = false;
-    this.setSnapshot({
+    this.publishAccounts({
       lifecycle: 'opening',
       connection: 'unknown',
       activeFederation: input.activeFederation,
@@ -299,60 +317,60 @@ export class FedimintWalletService implements WalletService {
 
     try {
       input.signal?.throwIfAborted();
-      const director = new FedimintWebWalletDirector(
-        new WasmWorkerTransport(),
-        true,
-      );
+      director = new FedimintWebWalletDirector(new WasmWorkerTransport(), true);
       director.setLogLevel('none');
       await director.initialize();
       input.signal?.throwIfAborted();
 
-      const wallet = await director.createWallet();
-      createdWallet = wallet;
-      if (input.activeFederation !== undefined) {
-        if (input.activeFederation.clientName !== SDK_DEFAULT_CLIENT_NAME) {
-          throw new WalletError('sdk_unavailable');
-        }
-        const opened = await wallet.open();
+      this.director = director;
+      this.clients.clear();
+      this.selectedId = undefined;
+      this.wallet = undefined;
+
+      for (const federation of federations) {
+        const wallet = director.createNamedWallet(federation.clientName);
+        const opened = await wallet.open(federation.clientName);
         if (!opened) {
           throw new WalletError('sdk_unavailable');
         }
+        input.signal?.throwIfAborted();
+        const balanceMsats = await this.readBalance(wallet);
+        this.clients.set(federation.federationId, {
+          federation,
+          wallet,
+          balanceMsats,
+        });
       }
 
       if (generation !== this.generation) {
-        await wallet.cleanup();
+        this.clearClients();
+        this.director = undefined;
+        await director.dispose();
         return;
       }
 
-      this.director = director;
-      this.wallet = wallet;
       handedToService = true;
-
-      const balanceMsats =
-        input.activeFederation === undefined
-          ? msats(0n)
-          : await this.readBalance(wallet);
-
-      this.setSnapshot({
+      this.selectedId =
+        input.activeFederation?.federationId ?? federations[0]?.federationId;
+      this.wallet =
+        this.selectedId === undefined
+          ? undefined
+          : this.clients.get(this.selectedId)?.wallet;
+      this.publishAccounts({
         lifecycle: 'ready',
-        connection: input.activeFederation === undefined ? 'unknown' : 'online',
-        activeFederation: input.activeFederation,
-        balanceMsats,
+        connection: this.selectedId === undefined ? 'unknown' : 'online',
       });
 
-      if (input.activeFederation !== undefined) {
-        this.subscribeToBalance(wallet, generation);
+      for (const client of this.clients.values()) {
+        this.subscribeToBalance(client, generation);
       }
     } catch (error) {
-      if (this.wallet === createdWallet) {
-        this.cancelBalanceSubscription?.();
-        this.cancelBalanceSubscription = undefined;
-        this.wallet = undefined;
-        this.director = undefined;
-      }
+      this.clearClients();
+      this.director = undefined;
+      this.wallet = undefined;
       if (!handedToService || generation === this.generation) {
         try {
-          await createdWallet?.cleanup();
+          await director?.dispose();
         } catch {
           // Preserve the original initialization/open error. The next attempt
           // creates a fresh one-shot director and worker.
@@ -360,7 +378,7 @@ export class FedimintWalletService implements WalletService {
       }
 
       if (generation === this.generation) {
-        this.setSnapshot({
+        this.publishAccounts({
           lifecycle: 'error',
           connection: 'offline',
           activeFederation: input.activeFederation,
@@ -376,8 +394,7 @@ export class FedimintWalletService implements WalletService {
 
   async close(): Promise<void> {
     this.generation += 1;
-    this.cancelBalanceSubscription?.();
-    this.cancelBalanceSubscription = undefined;
+    this.clearClients();
     this.cancelRecoverySubscription?.();
     this.cancelRecoverySubscription = undefined;
     for (const [mapKey, subscription] of [
@@ -396,14 +413,14 @@ export class FedimintWalletService implements WalletService {
     this.submittedLightningQuotes.clear();
     this.joinInFlight = undefined;
 
-    const wallet = this.wallet;
+    const director = this.director;
     this.wallet = undefined;
     this.director = undefined;
 
     try {
-      await wallet?.cleanup();
+      await director?.dispose();
     } finally {
-      this.setSnapshot({
+      this.publishAccounts({
         lifecycle: 'closed',
         connection: 'offline',
         balanceMsats: msats(0n),
@@ -508,42 +525,54 @@ export class FedimintWalletService implements WalletService {
     notes: SensitiveInput,
     signal?: AbortSignal,
   ): Promise<EcashPreview> {
-    const wallet = this.requireWallet();
-    const federation = this.requireActiveFederation();
     const generation = this.generation;
     signal?.throwIfAborted();
-
-    try {
-      const amount = await wallet.mint.parseNotes(notes);
-      signal?.throwIfAborted();
-      this.assertGeneration(generation);
-      const amountMsats = checkedSdkMsats(amount);
-      if (amountMsats === 0n) {
-        throw new WalletError('invalid_ecash');
-      }
-      const fingerprint = await fingerprintSensitiveInput(notes);
-      const preview: EcashPreview = Object.freeze({
-        fingerprint,
-        amountMsats,
-        federationId: federation.federationId,
-        compatible: true,
-      });
-      this.parsedEcash.set(fingerprint, { notes, preview });
-      return preview;
-    } catch (error) {
-      if (error instanceof DOMException || error instanceof WalletError) {
-        throw error;
-      }
-      throw new WalletError('invalid_ecash');
+    const clients = this.orderedClients();
+    if (clients.length === 0) {
+      throw new WalletError('wallet_locked');
     }
+
+    let lastError: unknown;
+    for (const client of clients) {
+      try {
+        const amount = await client.wallet.mint.parseNotes(notes);
+        signal?.throwIfAborted();
+        this.assertGeneration(generation);
+        const amountMsats = checkedSdkMsats(amount);
+        if (amountMsats === 0n) {
+          throw new WalletError('invalid_ecash');
+        }
+        const fingerprint = await fingerprintSensitiveInput(notes);
+        const preview: EcashPreview = Object.freeze({
+          fingerprint,
+          amountMsats,
+          federationId: client.federation.federationId,
+          compatible: true,
+        });
+        this.parsedEcash.set(fingerprint, { notes, preview });
+        return preview;
+      } catch (error) {
+        lastError = error;
+        if (error instanceof DOMException) {
+          throw error;
+        }
+      }
+    }
+
+    if (lastError instanceof WalletError) {
+      throw lastError;
+    }
+    throw new WalletError('invalid_ecash');
   }
 
   private async redeemEcash(
     intent: ConfirmedEcashRedeem,
     signal?: AbortSignal,
   ): Promise<TrackedOperation> {
-    const wallet = this.requireWallet();
-    const federation = this.requireActiveFederation();
+    const wallet = this.requireWallet(intent.preview.federationId);
+    const federation = this.requireActiveFederation(
+      intent.preview.federationId,
+    );
     const parsed = this.parsedEcash.get(intent.preview.fingerprint);
     if (parsed === undefined) {
       throw new WalletError('invalid_ecash');
@@ -1013,7 +1042,6 @@ export class FedimintWalletService implements WalletService {
       throw new WalletError('wallet_busy');
     }
 
-    const wallet = this.requireWallet();
     const pending = this.candidates.get(approval.candidateId);
 
     if (
@@ -1023,7 +1051,11 @@ export class FedimintWalletService implements WalletService {
       throw new WalletError('candidate_expired');
     }
 
-    const promise = this.performJoin(wallet, pending, signal);
+    if (this.clients.has(pending.candidate.federationId)) {
+      throw new WalletError('invalid_invite_code');
+    }
+
+    const promise = this.performJoin(pending, signal);
     this.joinInFlight = {
       candidateId: approval.candidateId,
       promise,
@@ -1039,20 +1071,25 @@ export class FedimintWalletService implements WalletService {
   }
 
   private async performJoin(
-    wallet: FedimintWallet,
     pending: PendingCandidate,
     signal?: AbortSignal,
   ): Promise<ActiveFederation> {
     const generation = this.generation;
-    this.setSnapshot({
-      ...this.snapshot,
+    const director = this.requireDirector();
+    const clientNameValue =
+      this.clients.size === 0 ? SDK_DEFAULT_CLIENT_NAME : crypto.randomUUID();
+    const wallet = director.createNamedWallet(clientNameValue);
+    this.publishAccounts({
       lifecycle: 'joining',
       error: undefined,
     });
 
     try {
       signal?.throwIfAborted();
-      const joined = await wallet.joinFederation(pending.inviteCode);
+      const joined = await wallet.joinFederation(
+        pending.inviteCode,
+        clientNameValue,
+      );
       if (generation !== this.generation) {
         throw new DOMException('Request aborted.', 'AbortError');
       }
@@ -1067,33 +1104,32 @@ export class FedimintWalletService implements WalletService {
         network: pending.candidate.network,
         modules: pending.candidate.modules,
         guardianCount: pending.candidate.guardianCount,
-        clientName: clientName(SDK_DEFAULT_CLIENT_NAME),
+        clientName: clientName(clientNameValue),
         joinedAtMs: Date.now(),
       });
       this.candidates.clear();
-      this.setSnapshot({
-        lifecycle: 'ready',
-        connection: 'unknown',
-        activeFederation,
-        balanceMsats: msats(0n),
-      });
       const balanceMsats = await this.readBalance(wallet);
       if (generation !== this.generation) {
         throw new DOMException('Request aborted.', 'AbortError');
       }
 
-      this.setSnapshot({
+      const client: OpenClient = {
+        federation: activeFederation,
+        wallet,
+        balanceMsats,
+      };
+      this.clients.set(activeFederation.federationId, client);
+      this.selectedId = activeFederation.federationId;
+      this.wallet = wallet;
+      this.publishAccounts({
         lifecycle: 'ready',
         connection: 'online',
-        activeFederation,
-        balanceMsats,
       });
-      this.subscribeToBalance(wallet, generation);
+      this.subscribeToBalance(client, generation);
       return activeFederation;
     } catch (error) {
       if (generation === this.generation) {
-        this.setSnapshot({
-          ...this.snapshot,
+        this.publishAccounts({
           lifecycle: 'ready',
           error: publicWalletError(
             error instanceof WalletError ? error.code : 'operation_failed',
@@ -1108,16 +1144,17 @@ export class FedimintWalletService implements WalletService {
     pending: FederationDescriptor,
     signal?: AbortSignal,
   ): Promise<ActiveFederation | undefined> {
-    const wallet = this.requireWallet();
     if (this.snapshot.activeFederation !== undefined) {
       return this.snapshot.activeFederation;
     }
 
+    const director = this.requireDirector();
     const generation = this.generation;
     signal?.throwIfAborted();
+    const wallet = director.createNamedWallet(SDK_DEFAULT_CLIENT_NAME);
     let opened: boolean;
     try {
-      opened = await wallet.open();
+      opened = await wallet.open(SDK_DEFAULT_CLIENT_NAME);
     } catch {
       throw new WalletError('operation_reconciliation_required');
     }
@@ -1143,44 +1180,58 @@ export class FedimintWalletService implements WalletService {
       clientName: clientName(SDK_DEFAULT_CLIENT_NAME),
       joinedAtMs: Date.now(),
     });
-    this.setSnapshot({
-      lifecycle: 'ready',
-      connection: 'unknown',
-      activeFederation,
-      balanceMsats: msats(0n),
-      error: undefined,
-    });
     const balanceMsats = await this.readBalance(wallet);
     this.assertGeneration(generation);
-    this.setSnapshot({
+    const client: OpenClient = {
+      federation: activeFederation,
+      wallet,
+      balanceMsats,
+    };
+    this.clients.set(activeFederation.federationId, client);
+    this.selectedId = activeFederation.federationId;
+    this.wallet = wallet;
+    this.publishAccounts({
       lifecycle: 'ready',
       connection: 'online',
-      activeFederation,
-      balanceMsats,
       error: undefined,
     });
-    this.subscribeToBalance(wallet, generation);
+    this.subscribeToBalance(client, generation);
     return activeFederation;
   }
 
-  async refreshBalance(signal?: AbortSignal): Promise<void> {
-    const wallet = this.requireWallet();
-    const generation = this.generation;
-
-    if (this.snapshot.activeFederation === undefined) {
+  private async selectFederation(
+    federationId: ActiveFederation['federationId'],
+  ): Promise<void> {
+    const client = this.clients.get(federationId);
+    if (client === undefined) {
       throw new WalletError('wallet_locked');
     }
+    this.selectedId = federationId;
+    this.wallet = client.wallet;
+    this.publishAccounts({
+      connection: 'online',
+      error: undefined,
+    });
+    await this.getCapabilities();
+  }
 
+  async refreshBalance(signal?: AbortSignal): Promise<void> {
+    if (this.clients.size === 0) {
+      throw new WalletError('wallet_locked');
+    }
+    const generation = this.generation;
     signal?.throwIfAborted();
-    const balanceMsats = await this.readBalance(wallet);
+    await Promise.all(
+      [...this.clients.values()].map(async (client) => {
+        client.balanceMsats = await this.readBalance(client.wallet);
+      }),
+    );
     signal?.throwIfAborted();
     if (generation !== this.generation) {
       throw new DOMException('Request aborted.', 'AbortError');
     }
-    this.setSnapshot({
-      ...this.snapshot,
+    this.publishAccounts({
       connection: 'online',
-      balanceMsats,
     });
   }
 
@@ -1289,11 +1340,12 @@ export class FedimintWalletService implements WalletService {
   private async fetchOperationFromSdk(
     key: OperationKey,
   ): Promise<WalletOperation | undefined> {
-    const wallet = this.requireWallet();
-    const activeFederation = this.requireActiveFederation();
-    if (key.federationId !== activeFederation.federationId) {
+    const client = this.clients.get(key.federationId);
+    if (client === undefined) {
       return undefined;
     }
+    const wallet = client.wallet;
+    const activeFederation = client.federation;
 
     const generation = this.generation;
     const observedAtMs = Date.now();
@@ -1644,7 +1696,9 @@ export class FedimintWalletService implements WalletService {
 
   private ensureSdkOperationSubscription(
     operation: WalletOperation,
-    wallet: FedimintWallet | undefined = this.wallet,
+    wallet: FedimintWallet | undefined = this.clients.get(
+      operation.key.federationId,
+    )?.wallet ?? this.wallet,
     generation = this.generation,
   ): void {
     const flow = sdkOperationFlow(operation);
@@ -1855,12 +1909,17 @@ export class FedimintWalletService implements WalletService {
     }
   }
 
-  private requireActiveFederation(): ActiveFederation {
-    const federation = this.snapshot.activeFederation;
-    if (federation === undefined) {
+  private requireActiveFederation(
+    federationId?: ActiveFederation['federationId'],
+  ): ActiveFederation {
+    const client =
+      federationId === undefined
+        ? this.selectedClient()
+        : this.clients.get(federationId);
+    if (client === undefined) {
       throw new WalletError('wallet_locked');
     }
-    return federation;
+    return client.federation;
   }
 
   private assertGeneration(generation: number): void {
@@ -1870,17 +1929,71 @@ export class FedimintWalletService implements WalletService {
   }
 
   private requireDirector(): FedimintWebWalletDirector {
-    if (this.snapshot.lifecycle !== 'ready' || this.director === undefined) {
+    if (
+      (this.snapshot.lifecycle !== 'ready' &&
+        this.snapshot.lifecycle !== 'joining') ||
+      this.director === undefined
+    ) {
       throw new WalletError('wallet_locked');
     }
     return this.director;
   }
 
-  private requireWallet(): FedimintWallet {
-    if (this.wallet === undefined) {
+  private requireWallet(
+    federationId?: ActiveFederation['federationId'],
+  ): FedimintWallet {
+    const client =
+      federationId === undefined
+        ? this.selectedClient()
+        : this.clients.get(federationId);
+    if (client === undefined) {
       throw new WalletError('wallet_locked');
     }
-    return this.wallet;
+    return client.wallet;
+  }
+
+  private selectedClient(): OpenClient | undefined {
+    return this.selectedId === undefined
+      ? undefined
+      : this.clients.get(this.selectedId);
+  }
+
+  private orderedClients(): OpenClient[] {
+    const selected = this.selectedClient();
+    const others = [...this.clients.values()].filter(
+      (client) =>
+        client.federation.federationId !== selected?.federation.federationId,
+    );
+    return selected === undefined ? others : [selected, ...others];
+  }
+
+  private clearClients(): void {
+    for (const client of this.clients.values()) {
+      try {
+        client.cancelBalance?.();
+      } catch {
+        // Balance subscriptions are best-effort on teardown.
+      }
+    }
+    this.clients.clear();
+    this.selectedId = undefined;
+  }
+
+  private publishAccounts(
+    patch: Partial<Omit<WalletSnapshot, 'serviceKind'>>,
+  ): void {
+    const selected = this.selectedClient();
+    this.setSnapshot({
+      ...patch,
+      activeFederation: selected?.federation,
+      balanceMsats: selected?.balanceMsats ?? msats(0n),
+      federations: [...this.clients.values()].map((client) =>
+        Object.freeze({
+          federation: client.federation,
+          balanceMsats: client.balanceMsats,
+        }),
+      ),
+    });
   }
 
   private async readBalance(wallet: FedimintWallet): Promise<Msats> {
@@ -1891,9 +2004,9 @@ export class FedimintWalletService implements WalletService {
     return msats(BigInt(value));
   }
 
-  private subscribeToBalance(wallet: FedimintWallet, generation: number): void {
-    this.cancelBalanceSubscription?.();
-    this.cancelBalanceSubscription = wallet.balance.subscribeBalance(
+  private subscribeToBalance(client: OpenClient, generation: number): void {
+    client.cancelBalance?.();
+    client.cancelBalance = client.wallet.balance.subscribeBalance(
       (value) => {
         if (
           generation !== this.generation ||
@@ -1903,16 +2016,14 @@ export class FedimintWalletService implements WalletService {
           return;
         }
 
-        this.setSnapshot({
-          ...this.snapshot,
+        client.balanceMsats = msats(BigInt(value));
+        this.publishAccounts({
           connection: 'online',
-          balanceMsats: msats(BigInt(value)),
         });
       },
       () => {
         if (generation === this.generation) {
-          this.setSnapshot({
-            ...this.snapshot,
+          this.publishAccounts({
             connection: 'offline',
           });
         }
@@ -1939,6 +2050,7 @@ export class FedimintWalletService implements WalletService {
     return Object.freeze({
       serviceKind: this.kind,
       ...input,
+      federations: Object.freeze([...(input.federations ?? [])]),
       operations: Object.freeze([...(input.operations ?? [])]),
     });
   }

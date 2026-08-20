@@ -27,6 +27,7 @@ import {
   type SecretMnemonic,
   type TrackedOperation,
   type WalletOperation,
+  type ActiveFederation,
   type ChatAvailability,
   type ChatMessageId,
   type ChatPaymentSendOutcome,
@@ -436,6 +437,7 @@ export class WalletAppController {
       this.update({ phase: 'opening', busy: 'unlock', error: undefined });
       await this.service.open({
         activeFederation: record.activeFederation,
+        federations: record.federations,
         signal: token.signal,
       });
       if (
@@ -458,6 +460,7 @@ export class WalletAppController {
             adapterVersion: profile.adapterVersion,
             identity: profile.identity,
             activeFederation: reconciled,
+            federations: [reconciled],
           });
           await records.put(walletProfileV2Schema, WALLET_RECORD_ID, profile);
           record = readWalletProfileV2(profile);
@@ -540,7 +543,7 @@ export class WalletAppController {
         phase:
           record.identity?.status !== 'initialized'
             ? 'identity'
-            : record.activeFederation === undefined
+            : record.federations.length === 0
               ? 'invite'
               : 'home',
         busy: undefined,
@@ -662,7 +665,7 @@ export class WalletAppController {
       }
       this.identityCreationPending = false;
       this.update({
-        phase: this.profile?.activeFederation === undefined ? 'invite' : 'home',
+        phase: this.nextPhaseAfterIdentity(),
         busy: undefined,
         error: undefined,
       });
@@ -705,7 +708,7 @@ export class WalletAppController {
 
       this.identityCreationPending = false;
       this.update({
-        phase: this.profile?.activeFederation === undefined ? 'invite' : 'home',
+        phase: this.nextPhaseAfterIdentity(),
         busy: undefined,
         error: undefined,
       });
@@ -751,10 +754,7 @@ export class WalletAppController {
         return;
       }
 
-      if (
-        this.service.kind === 'fedimint' &&
-        this.profile?.activeFederation === undefined
-      ) {
+      if (this.service.kind === 'fedimint' && !this.hasJoinedMint()) {
         this.update({
           busy: undefined,
           error: publicWalletError('recovery_start_unavailable').message,
@@ -767,7 +767,7 @@ export class WalletAppController {
         return;
       }
 
-      if (this.profile?.activeFederation !== undefined) {
+      if (this.hasJoinedMint()) {
         await this.service.recovery.waitForCompletion(token.signal);
         if (!this.guard.isCurrent(token)) {
           return;
@@ -784,7 +784,7 @@ export class WalletAppController {
 
       this.identityCreationPending = false;
       this.update({
-        phase: this.profile?.activeFederation === undefined ? 'invite' : 'home',
+        phase: this.nextPhaseAfterIdentity(),
         busy: undefined,
         error: undefined,
       });
@@ -1303,7 +1303,10 @@ export class WalletAppController {
   }
 
   async previewFederation(inviteCode: string): Promise<void> {
-    if (this.state.phase !== 'invite' || this.state.busy !== undefined) {
+    if (
+      (this.state.phase !== 'invite' && this.state.phase !== 'home') ||
+      this.state.busy !== undefined
+    ) {
       return;
     }
 
@@ -1320,7 +1323,7 @@ export class WalletAppController {
       }
 
       this.update({
-        phase: 'review',
+        phase: this.state.phase === 'invite' ? 'review' : 'home',
         candidate,
         busy: undefined,
         error: undefined,
@@ -1336,14 +1339,68 @@ export class WalletAppController {
   }
 
   returnToInvite(): void {
-    if (this.state.phase !== 'review' || this.state.busy !== undefined) {
+    if (this.state.busy !== undefined) {
       return;
     }
-    this.update({
-      phase: 'invite',
-      candidate: undefined,
-      error: undefined,
-    });
+    if (this.state.phase === 'review') {
+      this.update({
+        phase: 'invite',
+        candidate: undefined,
+        error: undefined,
+      });
+      return;
+    }
+    if (this.state.phase === 'home') {
+      this.update({
+        candidate: undefined,
+        error: undefined,
+      });
+    }
+  }
+
+  async selectFederation(id: string): Promise<void> {
+    if (this.state.phase !== 'home' || this.state.busy !== undefined) {
+      return;
+    }
+    const records = this.recordStore;
+    const profile = this.profile;
+    if (records === undefined || profile === undefined) {
+      return;
+    }
+    const token = this.guard.current();
+    try {
+      await this.service.federation.select(federationId(id));
+      if (!this.guard.isCurrent(token)) {
+        return;
+      }
+      const selected = this.service.getSnapshot().activeFederation;
+      if (selected === undefined) {
+        return;
+      }
+      await this.service.federation.getCapabilities(token.signal);
+      if (!this.guard.isCurrent(token)) {
+        return;
+      }
+      const current = readWalletProfileV2(profile);
+      const nextProfile = createWalletProfileV2(this.service.kind, {
+        adapterVersion: profile.adapterVersion,
+        identity: profile.identity,
+        activeFederation: selected,
+        federations: current.federations,
+      });
+      await records.put(walletProfileV2Schema, WALLET_RECORD_ID, nextProfile);
+      if (!this.guard.isCurrent(token)) {
+        return;
+      }
+      this.profile = nextProfile;
+      this.update({ error: undefined });
+    } catch (error) {
+      if (this.guard.isCurrent(token)) {
+        this.update({
+          error: toPublicWalletError(error).message,
+        });
+      }
+    }
   }
 
   joinFederation(
@@ -1725,6 +1782,25 @@ export class WalletAppController {
     return work;
   }
 
+  private hasJoinedMint(
+    profile: WalletProfileV2 | undefined = this.profile,
+  ): boolean {
+    return this.readJoinedFederations(profile).length > 0;
+  }
+
+  private readJoinedFederations(
+    profile: WalletProfileV2 | undefined = this.profile,
+  ): readonly ActiveFederation[] {
+    if (profile === undefined) {
+      return [];
+    }
+    return readWalletProfileV2(profile).federations;
+  }
+
+  private nextPhaseAfterIdentity(): 'invite' | 'home' {
+    return this.hasJoinedMint() ? 'home' : 'invite';
+  }
+
   private async persistIdentity(
     identity: WalletProfileV2['identity'],
   ): Promise<void> {
@@ -1734,13 +1810,12 @@ export class WalletAppController {
       throw new TypeError('Encrypted profile is unavailable.');
     }
 
+    const current = readWalletProfileV2(profile);
     const nextProfile = createWalletProfileV2(this.service.kind, {
       adapterVersion: profile.adapterVersion,
       identity,
-      activeFederation:
-        profile.activeFederation === undefined
-          ? undefined
-          : readWalletProfileV2(profile).activeFederation,
+      activeFederation: current.activeFederation,
+      federations: current.federations,
     });
     await records.put(walletProfileV2Schema, WALLET_RECORD_ID, nextProfile);
     this.profile = nextProfile;
@@ -1752,7 +1827,7 @@ export class WalletAppController {
   ): Promise<void> {
     const candidate = this.state.candidate;
     if (
-      this.state.phase !== 'review' ||
+      (this.state.phase !== 'review' && this.state.phase !== 'home') ||
       this.state.busy !== undefined ||
       candidate === undefined
     ) {
@@ -1816,10 +1891,18 @@ export class WalletAppController {
         return;
       }
 
+      const current = readWalletProfileV2(profile);
+      const federations = current.federations.some(
+        (federation) =>
+          federation.federationId === activeFederation.federationId,
+      )
+        ? current.federations
+        : [...current.federations, activeFederation];
       const nextProfile = createWalletProfileV2(this.service.kind, {
         adapterVersion: profile.adapterVersion,
         identity: profile.identity,
         activeFederation,
+        federations,
       });
       await records.put(walletProfileV2Schema, WALLET_RECORD_ID, nextProfile);
       try {

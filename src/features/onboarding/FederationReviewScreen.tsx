@@ -10,6 +10,7 @@ interface FederationReviewScreenProps {
   candidate: FederationCandidate;
   busy: boolean;
   error?: string;
+  variant?: 'onboard' | 'add';
   onBack(): void;
   onJoin(
     trustAcknowledged: boolean,
@@ -22,6 +23,7 @@ export function FederationReviewScreen({
   candidate,
   busy,
   error,
+  variant = 'onboard',
   onBack,
   onJoin,
 }: FederationReviewScreenProps) {
@@ -44,11 +46,15 @@ export function FederationReviewScreen({
 
   return (
     <section aria-labelledby="review-title">
-      <OnboardingProgress step={3} />
+      {variant === 'onboard' ? <OnboardingProgress step={3} /> : null}
       <h1 id="review-title" className="onb-title">
-        Choose a federation
+        {variant === 'add' ? 'Join this mint' : 'Choose a federation'}
       </h1>
-      <p className="onb-subtitle">Paste or scan a federation invite to join.</p>
+      <p className="onb-subtitle">
+        {variant === 'add'
+          ? 'Confirm this federation before adding it to your wallet.'
+          : 'Paste or scan a federation invite to join.'}
+      </p>
       <button
         className="fed-input-row fed-input-summary"
         type="button"
@@ -81,7 +87,11 @@ export function FederationReviewScreen({
           disabled={busy || joinBlockReason !== undefined}
           onClick={join}
         >
-          {busy ? 'Joining federation…' : 'Join federation'}
+          {busy
+            ? 'Joining mint…'
+            : variant === 'add'
+              ? 'Join mint'
+              : 'Join federation'}
         </button>
       </div>
     </section>

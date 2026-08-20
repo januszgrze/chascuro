@@ -347,6 +347,20 @@ export function ArrowUpRightIcon({ size = 20 }: IconProps) {
   );
 }
 
+export function PlusIcon({ size = 18 }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path d="M12 5v14M5 12h14" {...STROKE_PROPS} />
+    </svg>
+  );
+}
+
 export function ArrowDownLeftIcon({ size = 20 }: IconProps) {
   return (
     <svg

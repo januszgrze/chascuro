@@ -8,6 +8,7 @@ import {
   type ClearableSecretText,
   type EcashExport,
   type EcashPreview,
+  type FederationCandidate,
   type LightningInvoicePreview,
   type LightningQuote,
   type LightningReceive,
@@ -21,6 +22,8 @@ import {
   type WalletOperation,
 } from '../../domain';
 import type { WalletSnapshot } from '../../services/wallet';
+import { FederationInviteScreen } from '../onboarding/FederationInviteScreen';
+import { FederationReviewScreen } from '../onboarding/FederationReviewScreen';
 import { AmountKeypad } from '../shared/AmountKeypad';
 import { BitcoinMark } from '../shared/BitcoinMark';
 import {
@@ -34,7 +37,6 @@ import {
   ChevronLeftIcon,
   GearIcon,
   HistoryIcon,
-  LinkIcon,
   PasteIcon,
   WarningTriangleIcon,
 } from '../shared/icons';
@@ -46,6 +48,13 @@ import {
   type PaymentDirection,
   type PaymentRail,
 } from '../shared/SendReceiveShell';
+import {
+  ChooseMintScreen,
+  mintDisplayName,
+  PayFromCard,
+  selectedMintAccount,
+  totalJoinedBalance,
+} from './mint-screens';
 import {
   runViewTransition,
   type ViewTransitionDirection,
@@ -78,6 +87,9 @@ import {
 interface PaymentNavProps {
   onNavigate(rail: PaymentRail, direction: PaymentDirection): void;
   onHome(): void;
+  snapshot: WalletSnapshot;
+  onSelectFederation?(federationId: string): Promise<void>;
+  onConnectMint?(): void;
 }
 
 type FeatureResult<T> =
@@ -129,6 +141,16 @@ interface HomeScreenProps {
   onErase(typedConfirmation: string): Promise<FeatureResult<void>>;
   onOpenChat?: () => void;
   autoFocusChat?: boolean;
+  candidate?: FederationCandidate;
+  previewBusy?: boolean;
+  joinBusy?: boolean;
+  onPreviewFederation?(inviteCode: string): Promise<void>;
+  onJoinFederation?(
+    trustAcknowledged: boolean,
+    mainnetRiskAcknowledged: boolean,
+  ): Promise<void>;
+  onSelectFederation?(federationId: string): Promise<void>;
+  onCancelAddMint?(): void;
 }
 
 function ChatTopbarSlot({
@@ -174,7 +196,10 @@ type HomeView =
   | 'lightning-receive'
   | 'lightning-send'
   | 'activity'
-  | 'settings';
+  | 'settings'
+  | 'add-mint'
+  | 'add-mint-review'
+  | 'manage-mints';
 
 const HOME_VIEW_DEPTH: Record<HomeView, number> = {
   home: 0,
@@ -184,6 +209,9 @@ const HOME_VIEW_DEPTH: Record<HomeView, number> = {
   'lightning-send': 1,
   activity: 1,
   settings: 1,
+  'manage-mints': 2,
+  'add-mint': 2,
+  'add-mint-review': 3,
 };
 
 // Send and receive sit at the same position: switching between them is a
@@ -225,6 +253,7 @@ function resolveDirection(
 export function HomeScreen(props: HomeScreenProps) {
   const [view, setView] = useState<HomeView>('home');
   const viewRef = useRef<HomeView>('home');
+  const addMintReturnRef = useRef<HomeView>('manage-mints');
   const transitionTo = (
     next: HomeView,
     direction?: ViewTransitionDirection,
@@ -243,9 +272,28 @@ export function HomeScreen(props: HomeScreenProps) {
   const navigate = (rail: PaymentRail, direction: PaymentDirection) =>
     transitionTo(`${rail}-${direction}` as HomeView);
   const goHome = () => transitionTo('home');
-  // Returning home after a completed payment is a deliberate "close" moment, so
-  // the success card recedes and fades rather than doing a peer-screen push.
   const goHomeDismiss = () => transitionTo('home', 'dismiss');
+  const openAddMint = (from: HomeView) => {
+    addMintReturnRef.current = from;
+    transitionTo('add-mint');
+  };
+  const mintProps = {
+    snapshot: props.snapshot,
+    onSelectFederation: props.onSelectFederation,
+    onConnectMint: () => openAddMint(viewRef.current),
+  };
+
+  useEffect(() => {
+    if (props.candidate !== undefined && viewRef.current === 'add-mint') {
+      transitionTo('add-mint-review');
+    }
+    if (
+      props.candidate === undefined &&
+      viewRef.current === 'add-mint-review'
+    ) {
+      transitionTo(addMintReturnRef.current);
+    }
+  }, [props.candidate]);
 
   switch (view) {
     case 'ecash-receive':
@@ -261,6 +309,7 @@ export function HomeScreen(props: HomeScreenProps) {
     case 'ecash-send':
       return (
         <EcashSendScreen
+          {...mintProps}
           onNavigate={navigate}
           onHome={goHome}
           onCreate={props.onCreateEcashSpend}
@@ -269,6 +318,7 @@ export function HomeScreen(props: HomeScreenProps) {
     case 'lightning-receive':
       return (
         <LightningReceiveScreen
+          {...mintProps}
           enabled={
             props.snapshot.capabilities?.lightning === true &&
             props.snapshot.capabilities.gatewayAvailable === true
@@ -283,6 +333,7 @@ export function HomeScreen(props: HomeScreenProps) {
     case 'lightning-send':
       return (
         <LightningSendScreen
+          {...mintProps}
           enabled={props.snapshot.capabilities?.lightningSend === 'enabled'}
           operations={props.snapshot.operations}
           onNavigate={navigate}
@@ -298,6 +349,7 @@ export function HomeScreen(props: HomeScreenProps) {
       return (
         <ActivityScreen
           operations={props.snapshot.operations}
+          federations={props.snapshot.federations}
           onBack={goHome}
           onReconcile={props.onReconcile}
           onRecoverEcashExport={props.onRecoverEcashExport}
@@ -314,6 +366,71 @@ export function HomeScreen(props: HomeScreenProps) {
           onErase={props.onErase}
           onLock={props.onLock}
           onOpenChat={props.onOpenChat}
+          onManageMints={() => transitionTo('manage-mints')}
+        />
+      );
+    case 'manage-mints':
+      return (
+        <ChooseMintScreen
+          snapshot={props.snapshot}
+          intent="manage"
+          selectedId={props.snapshot.activeFederation?.federationId}
+          onConfirm={async (federationId) => {
+            await props.onSelectFederation?.(federationId);
+            transitionTo('settings');
+          }}
+          onClose={() => transitionTo('settings')}
+          onConnectMint={() => openAddMint('manage-mints')}
+        />
+      );
+    case 'add-mint':
+      return (
+        <FederationInviteScreen
+          variant="add"
+          busy={props.previewBusy === true}
+          error={props.error}
+          onPreview={async (inviteCode) => {
+            await props.onPreviewFederation?.(inviteCode);
+          }}
+          onLock={props.onLock}
+          onBack={() => {
+            props.onCancelAddMint?.();
+            transitionTo(addMintReturnRef.current);
+          }}
+        />
+      );
+    case 'add-mint-review':
+      return props.candidate === undefined ? (
+        <FederationInviteScreen
+          variant="add"
+          busy={props.previewBusy === true}
+          error={props.error}
+          onPreview={async (inviteCode) => {
+            await props.onPreviewFederation?.(inviteCode);
+          }}
+          onLock={props.onLock}
+          onBack={() => {
+            props.onCancelAddMint?.();
+            transitionTo('add-mint');
+          }}
+        />
+      ) : (
+        <FederationReviewScreen
+          variant="add"
+          candidate={props.candidate}
+          busy={props.joinBusy === true}
+          error={props.error}
+          onBack={() => {
+            props.onCancelAddMint?.();
+            transitionTo('add-mint');
+          }}
+          onJoin={async (trustAcknowledged, mainnetRiskAcknowledged) => {
+            await props.onJoinFederation?.(
+              trustAcknowledged,
+              mainnetRiskAcknowledged,
+            );
+          }}
+          onLock={props.onLock}
         />
       );
     case 'home':
@@ -328,6 +445,7 @@ function WalletOverview({
   onOpenChat,
   autoFocusChat,
 }: HomeScreenProps & { onNavigate(view: HomeView): void }) {
+  const totalMsats = totalJoinedBalance(snapshot);
   return (
     <section className="home-shell" aria-labelledby="home-title">
       <div className="home-topbar">
@@ -352,14 +470,12 @@ function WalletOverview({
         </div>
       </div>
       <div className="balance-card">
-        <span className="balance-label">BALANCE</span>
+        <span className="balance-label">TOTAL</span>
         <p className="balance-amount" aria-live="polite">
           <BitcoinMark className="amount-symbol" />
-          <span className="amount-value">
-            {formatMsatsAsSats(snapshot.balanceMsats)}
-          </span>
+          <span className="amount-value">{formatMsatsAsSats(totalMsats)}</span>
           <span className="visually-hidden">
-            Balance {formatMsatsAsSats(snapshot.balanceMsats)} sats
+            Total balance {formatMsatsAsSats(totalMsats)} sats
           </span>
         </p>
       </div>
@@ -388,7 +504,9 @@ function WalletOverview({
                     {operationLabel(operation)}
                   </span>
                   <span className="activity-status">
-                    {formatOperationStatus(operation.status)}
+                    {snapshot.federations.length > 1
+                      ? `${mintDisplayName(snapshot, operation.key.federationId)} · ${formatOperationStatus(operation.status)}`
+                      : formatOperationStatus(operation.status)}
                   </span>
                 </span>
                 <span
@@ -453,7 +571,9 @@ function EcashReceiveScreen({
   onDone,
   onParse,
   onRedeem,
-}: PaymentNavProps & {
+}: {
+  onNavigate: PaymentNavProps['onNavigate'];
+  onHome(): void;
   onDone(): void;
   onParse(rawNotes: string): Promise<FeatureResult<EcashPreview>>;
   onRedeem(preview: EcashPreview): Promise<FeatureResult<TrackedOperation>>;
@@ -664,11 +784,15 @@ function EcashSendScreen({
   onNavigate,
   onHome,
   onCreate,
+  snapshot,
+  onSelectFederation,
+  onConnectMint,
 }: PaymentNavProps & {
   onCreate(amountSats: string): Promise<FeatureResult<EcashExport>>;
 }) {
   const [amount, setAmount] = useState('');
   const [confirming, setConfirming] = useState(false);
+  const [pickingMint, setPickingMint] = useState(false);
   const [sentAmount, setSentAmount] = useState<string>();
   const [exported, setExported] = useState<EcashExport>();
   const [busy, setBusy] = useState(false);
@@ -773,6 +897,29 @@ function EcashSendScreen({
     );
   }
 
+  if (pickingMint) {
+    let amountMsats;
+    try {
+      amountMsats = parsePositiveSats(amount);
+    } catch {
+      amountMsats = undefined;
+    }
+    return (
+      <ChooseMintScreen
+        snapshot={snapshot}
+        intent="ecash-send"
+        amountMsats={amountMsats}
+        selectedId={snapshot.activeFederation?.federationId}
+        onConfirm={async (federationId) => {
+          await onSelectFederation?.(federationId);
+          setPickingMint(false);
+        }}
+        onClose={() => setPickingMint(false)}
+        onConnectMint={() => onConnectMint?.()}
+      />
+    );
+  }
+
   if (confirming) {
     return (
       <ResultScreen
@@ -788,6 +935,10 @@ function EcashSendScreen({
             : () => runViewTransition('back', () => setConfirming(false))
         }
       >
+        <PayFromCard
+          account={selectedMintAccount(snapshot)}
+          onPick={() => setPickingMint(true)}
+        />
         <button
           className="cta-pay"
           type="button"
@@ -801,9 +952,7 @@ function EcashSendScreen({
               <i />
               <i />
             </span>
-          ) : (
-            <LinkIcon size={20} />
-          )}
+          ) : null}
           {busy ? 'Creating…' : 'Create link'}
         </button>
       </ResultScreen>
@@ -837,6 +986,9 @@ function LightningReceiveScreen({
   onHome,
   onDone,
   onCreate,
+  snapshot,
+  onSelectFederation,
+  onConnectMint,
 }: PaymentNavProps & {
   enabled: boolean;
   operations: readonly WalletOperation[];
@@ -847,6 +999,8 @@ function LightningReceiveScreen({
   ): Promise<FeatureResult<LightningReceive>>;
 }) {
   const [amount, setAmount] = useState('');
+  const [confirming, setConfirming] = useState(false);
+  const [pickingMint, setPickingMint] = useState(false);
   const [receive, setReceive] = useState<LightningReceive>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -894,9 +1048,19 @@ function LightningReceiveScreen({
       return;
     }
     runViewTransition('forward', () => {
+      setPickingMint(false);
+      setConfirming(false);
       setReceive(result.value);
       setAmount('');
     });
+  }
+
+  function review() {
+    if (!ready) {
+      return;
+    }
+    setError(undefined);
+    runViewTransition('forward', () => setConfirming(true));
   }
 
   function discard() {
@@ -905,6 +1069,29 @@ function LightningReceiveScreen({
       setReceive(undefined);
       setCopyStatus(undefined);
     });
+  }
+
+  if (pickingMint) {
+    let amountMsats;
+    try {
+      amountMsats = parsePositiveSats(amount);
+    } catch {
+      amountMsats = undefined;
+    }
+    return (
+      <ChooseMintScreen
+        snapshot={snapshot}
+        intent="lightning-receive"
+        amountMsats={amountMsats}
+        selectedId={snapshot.activeFederation?.federationId}
+        onConfirm={async (federationId) => {
+          await onSelectFederation?.(federationId);
+          setPickingMint(false);
+        }}
+        onClose={() => setPickingMint(false)}
+        onConnectMint={() => onConnectMint?.()}
+      />
+    );
   }
 
   if (!enabled) {
@@ -934,120 +1121,161 @@ function LightningReceiveScreen({
     );
   }
 
-  if (receive === undefined) {
+  if (receive !== undefined) {
+    const displayOperation = liveOperation ?? receive.operation;
+
+    if (displayOperation.status === 'settled') {
+      return (
+        <ResultScreen
+          titleId="lightning-receive-title"
+          tone="success"
+          direction="in"
+          title="Received"
+          amountSats={
+            displayOperation.amountMsats === undefined
+              ? undefined
+              : formatMsatsAsSats(displayOperation.amountMsats)
+          }
+        >
+          <button className="cta-pay" type="button" onClick={onDone}>
+            <CheckIcon size={20} />
+            Done
+          </button>
+        </ResultScreen>
+      );
+    }
+
     return (
-      <SendReceiveShell
-        rail="lightning"
-        direction="receive"
-        variant="light"
-        onNavigate={onNavigate}
-        onHome={onHome}
-      >
-        <AmountKeypad
-          value={amount}
-          onChange={setAmount}
-          disabled={busy}
-          onConfirm={() => void create()}
-          confirmDisabled={!ready || busy}
-          confirmLabel="Create invoice"
-          confirmBusy={busy}
-        />
-        <ScreenError message={error} />
-      </SendReceiveShell>
+      <section className="qr-share" aria-labelledby="lightning-receive-title">
+        <div className="confirm-topbar qr-share-topbar">
+          <button
+            className="confirm-back"
+            type="button"
+            aria-label="Back"
+            onClick={discard}
+          >
+            <ChevronLeftIcon />
+          </button>
+        </div>
+        <div className="qr-share-body">
+          <h1 id="lightning-receive-title" className="visually-hidden">
+            Your invoice
+          </h1>
+          {displayOperation.amountMsats !== undefined && (
+            <p className="qr-share-amount">
+              <BitcoinMark className="amount-symbol" />
+              <span className="amount-value">
+                {formatMsatsAsSats(displayOperation.amountMsats)}
+              </span>
+            </p>
+          )}
+          {receive.secretStorage === 'memory_only' && shareable && (
+            <div className="notice" role="alert">
+              <strong>Encrypted recovery failed.</strong>
+              <p>
+                Share this invoice now. It will not be recoverable after you
+                leave, lock the wallet, reload, or close this page.
+              </p>
+            </div>
+          )}
+          {shareable && expiresAtMs !== undefined ? (
+            <>
+              <p className="qr-expiry" role="timer" aria-live="polite">
+                <ClockGlyph />
+                Expires in {formatCountdown(expiresAtMs - nowMs)}
+              </p>
+              <div className="qr-card">
+                <QrCode
+                  contentType="bolt11"
+                  value={receive.invoice.reveal()}
+                  label="Lightning invoice QR code"
+                />
+              </div>
+              <ShareButton
+                secret={receive.invoice}
+                label="Share invoice"
+                title="Lightning invoice"
+                onStatus={setCopyStatus}
+              />
+            </>
+          ) : (
+            <div className="notice" role="status">
+              <strong>{lightningInvoiceUnavailableTitle(liveOperation)}</strong>
+              <p>
+                The invoice has been cleared from this screen and can no longer
+                be presented as payable.
+              </p>
+            </div>
+          )}
+          <p className="visually-hidden" aria-live="polite">
+            {copyStatus}
+          </p>
+        </div>
+        <WalletDock active="receive" onNavigate={onNavigate} onHome={onHome} />
+      </section>
     );
   }
 
-  const displayOperation = liveOperation ?? receive.operation;
-
-  if (displayOperation.status === 'settled') {
+  if (confirming) {
     return (
       <ResultScreen
         titleId="lightning-receive-title"
         tone="success"
         direction="in"
-        title="Received"
-        amountSats={
-          displayOperation.amountMsats === undefined
+        title="Receive"
+        amountSats={amount}
+        error={error}
+        onBack={
+          busy
             ? undefined
-            : formatMsatsAsSats(displayOperation.amountMsats)
+            : () => runViewTransition('back', () => setConfirming(false))
         }
       >
-        <button className="cta-pay" type="button" onClick={onDone}>
-          <CheckIcon size={20} />
-          Done
+        <PayFromCard
+          account={selectedMintAccount(snapshot)}
+          direction="receive"
+          onPick={() => setPickingMint(true)}
+        />
+        <button
+          className="cta-pay"
+          type="button"
+          disabled={busy}
+          aria-busy={busy}
+          onClick={() => void create()}
+        >
+          {busy ? (
+            <span className="pending-dots" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </span>
+          ) : (
+            <BoltIcon size={20} />
+          )}
+          {busy ? 'Creating…' : 'Create invoice'}
         </button>
       </ResultScreen>
     );
   }
 
   return (
-    <section className="qr-share" aria-labelledby="lightning-receive-title">
-      <div className="confirm-topbar qr-share-topbar">
-        <button
-          className="confirm-back"
-          type="button"
-          aria-label="Back"
-          onClick={discard}
-        >
-          <ChevronLeftIcon />
-        </button>
-      </div>
-      <div className="qr-share-body">
-        <h1 id="lightning-receive-title" className="visually-hidden">
-          Your invoice
-        </h1>
-        {displayOperation.amountMsats !== undefined && (
-          <p className="qr-share-amount">
-            <BitcoinMark className="amount-symbol" />
-            <span className="amount-value">
-              {formatMsatsAsSats(displayOperation.amountMsats)}
-            </span>
-          </p>
-        )}
-        {receive.secretStorage === 'memory_only' && shareable && (
-          <div className="notice" role="alert">
-            <strong>Encrypted recovery failed.</strong>
-            <p>
-              Share this invoice now. It will not be recoverable after you
-              leave, lock the wallet, reload, or close this page.
-            </p>
-          </div>
-        )}
-        {shareable && expiresAtMs !== undefined ? (
-          <>
-            <p className="qr-expiry" role="timer" aria-live="polite">
-              <ClockGlyph />
-              Expires in {formatCountdown(expiresAtMs - nowMs)}
-            </p>
-            <div className="qr-card">
-              <QrCode
-                contentType="bolt11"
-                value={receive.invoice.reveal()}
-                label="Lightning invoice QR code"
-              />
-            </div>
-            <ShareButton
-              secret={receive.invoice}
-              label="Share invoice"
-              title="Lightning invoice"
-              onStatus={setCopyStatus}
-            />
-          </>
-        ) : (
-          <div className="notice" role="status">
-            <strong>{lightningInvoiceUnavailableTitle(liveOperation)}</strong>
-            <p>
-              The invoice has been cleared from this screen and can no longer be
-              presented as payable.
-            </p>
-          </div>
-        )}
-        <p className="visually-hidden" aria-live="polite">
-          {copyStatus}
-        </p>
-      </div>
-      <WalletDock active="receive" onNavigate={onNavigate} onHome={onHome} />
-    </section>
+    <SendReceiveShell
+      rail="lightning"
+      direction="receive"
+      variant="light"
+      onNavigate={onNavigate}
+      onHome={onHome}
+    >
+      <AmountKeypad
+        value={amount}
+        onChange={setAmount}
+        disabled={busy}
+        onConfirm={review}
+        confirmDisabled={!ready || busy}
+        confirmLabel="Review receive"
+      />
+      <ScreenError message={error} />
+    </SendReceiveShell>
   );
 }
 
@@ -1061,6 +1289,9 @@ function LightningSendScreen({
   onResolveLnurl,
   onQuoteLnurl,
   onPay,
+  snapshot,
+  onSelectFederation,
+  onConnectMint,
 }: PaymentNavProps & {
   enabled: boolean;
   operations: readonly WalletOperation[];
@@ -1098,8 +1329,8 @@ function LightningSendScreen({
   const [revealResult, setRevealResult] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [pickingMint, setPickingMint] = useState(false);
   const manualInputRef = useRef<HTMLTextAreaElement>(null);
-  const nowMs = useCurrentTime(review !== undefined);
   const feeLimitSats = '10';
 
   // While a submitted payment is still in flight we stay on the review screen
@@ -1248,6 +1479,23 @@ function LightningSendScreen({
     setOperation(result.value.operation);
   }
 
+  if (pickingMint) {
+    return (
+      <ChooseMintScreen
+        snapshot={snapshot}
+        intent="lightning-send"
+        amountMsats={review?.quote.amountMsats}
+        selectedId={snapshot.activeFederation?.federationId}
+        onConfirm={async (federationId) => {
+          await onSelectFederation?.(federationId);
+          setPickingMint(false);
+        }}
+        onClose={() => setPickingMint(false)}
+        onConnectMint={() => onConnectMint?.()}
+      />
+    );
+  }
+
   if (!enabled) {
     return (
       <section className="confirm-shell" aria-labelledby="lightning-send-title">
@@ -1389,43 +1637,29 @@ function LightningSendScreen({
   if (review !== undefined) {
     const amountLabel = formatMsatsAsSats(review.quote.amountMsats);
     return (
-      <section className="confirm-shell" aria-labelledby="lightning-send-title">
-        <div className="confirm-topbar">
-          <button
-            className="confirm-back"
-            type="button"
-            aria-label="Back"
-            disabled={busy || paying}
-            onClick={() =>
-              runViewTransition('back', () => {
-                setReview(undefined);
-                setError(undefined);
-              })
-            }
-          >
-            <ChevronLeftIcon />
-          </button>
-          <h1 id="lightning-send-title" className="confirm-title">
-            Pay invoice
-          </h1>
-        </div>
-        <div className="confirm-amount">
-          <BitcoinMark className="amount-symbol" />
-          <span className="amount-value">{amountLabel}</span>
-        </div>
-        <div className="pay-card">
-          <div className="pay-row">
-            <span className="pay-label">To</span>
-            <span className="pay-value">
-              {review.preview.payeeHint ?? 'Lightning invoice'}
-            </span>
-          </div>
-          {review.preview.description !== undefined && (
-            <div className="pay-row">
-              <span className="pay-label">Description</span>
-              <span className="pay-value">{review.preview.description}</span>
-            </div>
-          )}
+      <ResultScreen
+        titleId="lightning-send-title"
+        tone="success"
+        direction="out"
+        title="Pay"
+        amountSats={amountLabel}
+        error={error}
+        icon={<BoltIcon size={52} />}
+        onBack={
+          busy || paying
+            ? undefined
+            : () =>
+                runViewTransition('back', () => {
+                  setReview(undefined);
+                  setError(undefined);
+                })
+        }
+      >
+        <PayFromCard
+          account={selectedMintAccount(snapshot)}
+          onPick={() => setPickingMint(true)}
+        />
+        <div className="pay-card pay-card--compact">
           <div className="pay-row">
             <span className="pay-label">Network fee</span>
             <span className="pay-value">
@@ -1433,18 +1667,7 @@ function LightningSendScreen({
               {formatMsatsAsSats(review.quote.feeMsats)}
             </span>
           </div>
-          <div className="pay-row">
-            <span className="pay-label">Network</span>
-            <span className="pay-value">{review.preview.network}</span>
-          </div>
-          <div className="pay-row">
-            <span className="pay-label">Expires in</span>
-            <span className="pay-value">
-              {formatCountdown(review.quote.expiresAtMs - nowMs)}
-            </span>
-          </div>
         </div>
-        <ScreenError message={error} />
         <button
           className="cta-pay"
           type="button"
@@ -1452,17 +1675,16 @@ function LightningSendScreen({
           aria-busy={busy || paying}
           onClick={() => void pay()}
         >
-          <BoltIcon size={20} />
-          Pay <BitcoinMark className="btc-symbol" /> {amountLabel}
-          {(busy || paying) && (
+          {busy || paying ? (
             <span className="pending-dots" aria-hidden="true">
               <i />
               <i />
               <i />
             </span>
-          )}
+          ) : null}
+          Pay invoice
         </button>
-      </section>
+      </ResultScreen>
     );
   }
 
@@ -1554,6 +1776,7 @@ function lnurlAmountError(
 
 function ActivityScreen({
   operations,
+  federations,
   onBack,
   onReconcile,
   onRecoverEcashExport,
@@ -1561,6 +1784,7 @@ function ActivityScreen({
   onOpenChat,
 }: {
   operations: readonly WalletOperation[];
+  federations: WalletSnapshot['federations'];
   onBack(): void;
   onOpenChat?: () => void;
   onReconcile(): Promise<FeatureResult<void>>;
@@ -1651,7 +1875,9 @@ function ActivityScreen({
                         operation.status === 'settled' ? ' is-positive' : ''
                       }`}
                     >
-                      {formatOperationStatus(operation.status)}
+                      {federations.length > 1
+                        ? `${mintNameFromAccounts(federations, operation.key.federationId)} · ${formatOperationStatus(operation.status)}`
+                        : formatOperationStatus(operation.status)}
                     </span>
                   </span>
                   <span
@@ -1904,6 +2130,7 @@ function SettingsScreen({
   onErase,
   onLock,
   onOpenChat,
+  onManageMints,
 }: {
   snapshot: WalletSnapshot;
   onBack(): void;
@@ -1911,6 +2138,7 @@ function SettingsScreen({
   onErase(typedConfirmation: string): Promise<FeatureResult<void>>;
   onLock(): Promise<void>;
   onOpenChat?: () => void;
+  onManageMints(): void;
 }) {
   type SettingsSection = 'wallet' | 'seed' | 'recovery';
 
@@ -1994,12 +2222,16 @@ function SettingsScreen({
           open={openSection === 'wallet'}
           onToggle={() => toggleSection('wallet')}
         >
-          <dl className="details-list">
-            <div>
-              <dt>Federation</dt>
-              <dd>{snapshot.activeFederation?.displayName ?? 'Unknown'}</dd>
-            </div>
-          </dl>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={onManageMints}
+          >
+            Your mints
+            {snapshot.activeFederation !== undefined
+              ? ` · ${snapshot.activeFederation.displayName}`
+              : ''}
+          </button>
           <button
             className="secondary-button"
             type="button"
@@ -2108,5 +2340,16 @@ function SettingsScreen({
       </div>
       <ScreenError message={error} />
     </section>
+  );
+}
+
+function mintNameFromAccounts(
+  federations: WalletSnapshot['federations'],
+  federationId: string,
+): string {
+  return (
+    federations.find(
+      (account) => account.federation.federationId === federationId,
+    )?.federation.displayName ?? 'Mint'
   );
 }
