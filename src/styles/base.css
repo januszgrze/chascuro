@@ -146,6 +146,19 @@ textarea {
     env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
+/*
+ * Standalone WebKit can report a dynamic viewport shorter than 100vh. Keep
+ * the entire root chain at the full PWA height so it does not clip the frame.
+ */
+@media (display-mode: standalone) {
+  html,
+  body,
+  #root,
+  .app-frame {
+    height: 100vh;
+  }
+}
+
 .app-frame--dark {
   background-color: #0b0906;
   background-image:
