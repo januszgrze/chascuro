@@ -680,12 +680,17 @@ function EcashReceiveScreen({
             ? undefined
             : formatMsatsAsSats(operation.amountMsats)
         }
-      >
-        <button className="cta-pay" type="button" onClick={onDone}>
-          <CheckIcon size={20} />
-          Done
-        </button>
-      </ResultScreen>
+        action={
+          <button
+            className="flow-primary-action"
+            type="button"
+            onClick={onDone}
+          >
+            <CheckIcon size={20} />
+            Done
+          </button>
+        }
+      />
     );
   }
 
@@ -704,17 +709,18 @@ function EcashReceiveScreen({
         }
         onBack={() => runViewTransition('back', () => setPreview(undefined))}
         error={error}
-      >
-        <button
-          className="cta-pay"
-          type="button"
-          disabled={busy || !preview.compatible}
-          onClick={() => void redeem()}
-        >
-          <ArrowDownIcon size={20} />
-          {busy ? 'Redeeming…' : 'Redeem'}
-        </button>
-      </ResultScreen>
+        action={
+          <button
+            className="flow-primary-action"
+            type="button"
+            disabled={busy || !preview.compatible}
+            onClick={() => void redeem()}
+          >
+            <ArrowDownIcon size={20} />
+            {busy ? 'Redeeming…' : 'Redeem'}
+          </button>
+        }
+      />
     );
   }
 
@@ -934,27 +940,29 @@ function EcashSendScreen({
             ? undefined
             : () => runViewTransition('back', () => setConfirming(false))
         }
+        action={
+          <button
+            className="flow-primary-action"
+            type="button"
+            disabled={busy}
+            aria-busy={busy}
+            onClick={() => void create()}
+          >
+            {busy ? (
+              <span className="pending-dots" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
+            ) : null}
+            {busy ? 'Creating…' : 'Create link'}
+          </button>
+        }
       >
         <PayFromCard
           account={selectedMintAccount(snapshot)}
           onPick={() => setPickingMint(true)}
         />
-        <button
-          className="cta-pay"
-          type="button"
-          disabled={busy}
-          aria-busy={busy}
-          onClick={() => void create()}
-        >
-          {busy ? (
-            <span className="pending-dots" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
-          ) : null}
-          {busy ? 'Creating…' : 'Create link'}
-        </button>
       </ResultScreen>
     );
   }
@@ -1136,12 +1144,17 @@ function LightningReceiveScreen({
               ? undefined
               : formatMsatsAsSats(displayOperation.amountMsats)
           }
-        >
-          <button className="cta-pay" type="button" onClick={onDone}>
-            <CheckIcon size={20} />
-            Done
-          </button>
-        </ResultScreen>
+          action={
+            <button
+              className="flow-primary-action"
+              type="button"
+              onClick={onDone}
+            >
+              <CheckIcon size={20} />
+              Done
+            </button>
+          }
+        />
       );
     }
 
@@ -1230,30 +1243,32 @@ function LightningReceiveScreen({
             ? undefined
             : () => runViewTransition('back', () => setConfirming(false))
         }
+        action={
+          <button
+            className="flow-primary-action"
+            type="button"
+            disabled={busy}
+            aria-busy={busy}
+            onClick={() => void create()}
+          >
+            {busy ? (
+              <span className="pending-dots" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
+            ) : (
+              <BoltIcon size={20} />
+            )}
+            {busy ? 'Creating…' : 'Create invoice'}
+          </button>
+        }
       >
         <PayFromCard
           account={selectedMintAccount(snapshot)}
           direction="receive"
           onPick={() => setPickingMint(true)}
         />
-        <button
-          className="cta-pay"
-          type="button"
-          disabled={busy}
-          aria-busy={busy}
-          onClick={() => void create()}
-        >
-          {busy ? (
-            <span className="pending-dots" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
-          ) : (
-            <BoltIcon size={20} />
-          )}
-          {busy ? 'Creating…' : 'Create invoice'}
-        </button>
       </ResultScreen>
     );
   }
@@ -1542,6 +1557,16 @@ function LightningSendScreen({
             ? undefined
             : 'Review Activity before trying this payment again.'
         }
+        action={
+          <button
+            className="flow-primary-action"
+            type="button"
+            onClick={onDone}
+          >
+            <CheckIcon size={20} />
+            Done
+          </button>
+        }
       >
         {successAction?.tag === 'message' && (
           <div className="notice" role="status">
@@ -1559,10 +1584,6 @@ function LightningSendScreen({
             </p>
           </div>
         )}
-        <button className="cta-pay" type="button" onClick={onDone}>
-          <CheckIcon size={20} />
-          Done
-        </button>
       </ResultScreen>
     );
   }
@@ -1576,60 +1597,67 @@ function LightningSendScreen({
         ? undefined
         : formatMsatsAsSats(offer.fixedAmountMsats);
     return (
-      <section className="confirm-shell" aria-labelledby="lightning-send-title">
-        <div className="confirm-topbar">
-          <button
-            className="confirm-back"
-            type="button"
-            aria-label="Back"
-            disabled={busy}
-            onClick={() =>
-              runViewTransition('back', () => {
-                setOffer(undefined);
-                setAmount('');
-                setError(undefined);
-              })
-            }
-          >
-            <ChevronLeftIcon />
-          </button>
-          <h1 id="lightning-send-title" className="confirm-title">
-            Choose amount
-          </h1>
-        </div>
-        <p className="lnurl-recipient">
-          <span>To:</span> <strong>{offer.destination}</strong>
-        </p>
-        {fixedAmountLabel === undefined ? (
-          <AmountKeypad
-            value={amount}
-            onChange={(next) => {
-              setAmount(next);
-              setError(undefined);
-            }}
-            disabled={busy}
-          />
-        ) : (
-          <div className="confirm-amount">
-            <BitcoinMark className="amount-symbol" />
-            <span className="amount-value">{fixedAmountLabel}</span>
+      <section
+        className="confirm-shell flow-screen"
+        aria-labelledby="lightning-send-title"
+      >
+        <div className="flow-screen-content">
+          <div className="confirm-topbar">
+            <button
+              className="confirm-back"
+              type="button"
+              aria-label="Back"
+              disabled={busy}
+              onClick={() =>
+                runViewTransition('back', () => {
+                  setOffer(undefined);
+                  setAmount('');
+                  setError(undefined);
+                })
+              }
+            >
+              <ChevronLeftIcon />
+            </button>
+            <h1 id="lightning-send-title" className="confirm-title">
+              Choose amount
+            </h1>
           </div>
-        )}
-        {amount.length > 0 && amountError !== undefined && (
-          <p className="scan-error" role="alert">
-            {amountError}
+          <p className="lnurl-recipient">
+            <span>To:</span> <strong>{offer.destination}</strong>
           </p>
-        )}
-        <ScreenError message={error} />
-        <button
-          className="cta-pay"
-          type="button"
-          disabled={busy || amountError !== undefined}
-          onClick={() => void quoteLnurl()}
-        >
-          <BoltIcon size={20} />
-          {busy ? 'Requesting invoice…' : 'Review payment'}
-        </button>
+          {fixedAmountLabel === undefined ? (
+            <AmountKeypad
+              value={amount}
+              onChange={(next) => {
+                setAmount(next);
+                setError(undefined);
+              }}
+              disabled={busy}
+            />
+          ) : (
+            <div className="confirm-amount">
+              <BitcoinMark className="amount-symbol" />
+              <span className="amount-value">{fixedAmountLabel}</span>
+            </div>
+          )}
+        </div>
+        <div className="screen-actions">
+          {amount.length > 0 && amountError !== undefined && (
+            <p className="scan-error" role="alert">
+              {amountError}
+            </p>
+          )}
+          <ScreenError message={error} />
+          <button
+            className="flow-primary-action"
+            type="button"
+            disabled={busy || amountError !== undefined}
+            onClick={() => void quoteLnurl()}
+          >
+            <BoltIcon size={20} />
+            {busy ? 'Requesting invoice…' : 'Review payment'}
+          </button>
+        </div>
       </section>
     );
   }
@@ -1654,6 +1682,24 @@ function LightningSendScreen({
                   setError(undefined);
                 })
         }
+        action={
+          <button
+            className="flow-primary-action"
+            type="button"
+            disabled={busy || paying}
+            aria-busy={busy || paying}
+            onClick={() => void pay()}
+          >
+            {busy || paying ? (
+              <span className="pending-dots" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
+            ) : null}
+            Pay invoice
+          </button>
+        }
       >
         <PayFromCard
           account={selectedMintAccount(snapshot)}
@@ -1668,22 +1714,6 @@ function LightningSendScreen({
             </span>
           </div>
         </div>
-        <button
-          className="cta-pay"
-          type="button"
-          disabled={busy || paying}
-          aria-busy={busy || paying}
-          onClick={() => void pay()}
-        >
-          {busy || paying ? (
-            <span className="pending-dots" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
-          ) : null}
-          Pay invoice
-        </button>
       </ResultScreen>
     );
   }

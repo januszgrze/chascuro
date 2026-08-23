@@ -287,38 +287,9 @@
   color: var(--color-on-primary);
 }
 
-/* Send CTA (Create link / Send payment) */
-
-.cta-send {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  margin: 28px 32px 0;
-  height: 56px;
-  padding: 0 18px;
-  border: 0;
-  border-radius: var(--radius-full);
-  background: var(--color-primary);
-  color: var(--color-on-primary);
-  font-size: var(--text-body);
-  font-weight: var(--font-weight-bold);
-  line-height: 18px;
-  transition:
-    background-color 150ms ease,
-    color 150ms ease;
-}
-
-.cta-send:disabled {
-  background: var(--color-surface);
-  color: var(--color-muted);
-  opacity: 1;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .amount-keypad .keypad-key,
-  .pinpad .keypad-key,
-  .cta-send {
+  .pinpad .keypad-key {
     transition: none;
   }
 
@@ -334,6 +305,8 @@
 /* Dark scanner */
 
 .scan-body {
+  --scan-square-size: 257px;
+
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -355,8 +328,8 @@
   align-items: center;
   justify-content: center;
   gap: 20px;
-  width: 257px;
-  height: 257px;
+  width: var(--scan-square-size);
+  height: var(--scan-square-size);
   border: 3px solid rgba(255, 255, 255, 0.92);
   border-radius: 28px;
   background: #050505;
@@ -390,6 +363,7 @@
 .scan-paste {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
   padding: 14px 22px;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -399,6 +373,10 @@
   font-size: var(--text-body);
   font-weight: var(--font-weight-medium);
   line-height: 18px;
+}
+
+.scan-body > .scan-paste {
+  width: var(--scan-square-size);
 }
 
 .scan-manual {
@@ -537,22 +515,6 @@
   line-height: 18px;
   text-align: right;
   overflow-wrap: anywhere;
-}
-
-.cta-pay {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  margin: auto 20px 40px;
-  padding: 18px;
-  border: 0;
-  border-radius: var(--radius-full);
-  background: var(--color-primary);
-  color: var(--color-on-primary);
-  font-size: var(--text-body);
-  font-weight: var(--font-weight-bold);
-  line-height: 18px;
 }
 
 /*
@@ -702,7 +664,6 @@
   flex-shrink: 0;
   flex-direction: column;
   width: 100%;
-  max-width: 300px;
   margin: 0 auto;
   text-align: left;
 }
@@ -957,26 +918,6 @@
   color: #7e828b;
 }
 
-.choose-mint-footer {
-  display: flex;
-  flex-shrink: 0;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  margin-top: auto;
-  padding: 16px 24px calc(26px + env(safe-area-inset-bottom, 0px));
-}
-
-.choose-mint-confirm {
-  width: 100%;
-  max-width: none;
-  margin: 0;
-  padding: 18px;
-  font-size: var(--text-title);
-  font-weight: var(--font-weight-bold);
-  line-height: 20px;
-}
-
 .choose-mint-form {
   display: flex;
   flex: 1;
@@ -1008,10 +949,6 @@
   margin: 10px 0 0;
 }
 
-.result-screen:has(.result-topbar) {
-  position: relative;
-}
-
 .result-screen:has(.result-topbar) .result-topbar {
   position: absolute;
   top: 0;
@@ -1022,15 +959,14 @@
 
 .result-body .pay-card--compact {
   width: 100%;
-  max-width: 300px;
   margin: 0 auto;
 }
 
-.result-body:has(.pay-from) {
-  position: relative;
+.result-screen:has(.pay-from) .result-actions {
+  padding-top: 16px;
 }
 
-.result-body:has(.pay-from) .result-group {
+.result-screen:has(.pay-from) .result-group {
   position: absolute;
   top: 38%;
   left: 50%;
@@ -1289,7 +1225,6 @@ p {
   font-size: var(--text-label);
 }
 
-.primary-button,
 .secondary-button {
   width: calc(100% - 40px);
   min-height: 3.25rem;
@@ -1298,11 +1233,6 @@ p {
   border: 0;
   border-radius: var(--radius-full);
   font-weight: var(--font-weight-bold);
-}
-
-.primary-button {
-  background: var(--color-primary);
-  color: var(--color-on-primary);
 }
 
 .secondary-button {
@@ -1471,7 +1401,6 @@ p {
   margin: 0;
 }
 
-.secret-recovery .primary-button,
 .secret-recovery .secondary-button {
   width: 100%;
   margin: 0;
@@ -1742,6 +1671,7 @@ p {
 /* Payment result screens (dark) — success + redeem */
 
 .result-screen {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -1759,12 +1689,29 @@ p {
 
 .result-body {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: flex-end;
   gap: 16px;
-  padding: 0 20px 40px;
+  padding: 0 var(--flow-action-inline);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  text-align: center;
+}
+
+.result-support {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+}
+
+.result-support > .error-message {
+  margin: 0;
   text-align: center;
 }
 
@@ -1921,17 +1868,6 @@ p {
   color: rgba(255, 255, 255, 0.55);
 }
 
-.result-body .cta-pay {
-  width: 300px;
-  max-width: 100%;
-  margin: 0;
-  padding: 19px;
-  gap: 10px;
-  font-size: var(--text-title);
-  font-weight: var(--font-weight-bold);
-  line-height: 20px;
-}
-
 /* QR share screens (dark) — ecash notes + lightning invoice */
 
 .qr-share {
@@ -1951,6 +1887,8 @@ p {
 }
 
 .qr-share-body {
+  --qr-share-size: min(70vw, 280px);
+
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -2017,7 +1955,7 @@ p {
 
 .qr-share .qr-card img {
   display: block;
-  width: min(70vw, 280px);
+  width: var(--qr-share-size);
   height: auto;
 }
 
@@ -2068,6 +2006,7 @@ p {
   align-items: center;
   justify-content: center;
   gap: 10px;
+  width: var(--qr-share-size);
   padding: 17px 44px;
   border: none;
   border-radius: var(--radius-full);

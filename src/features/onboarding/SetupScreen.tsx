@@ -52,21 +52,23 @@ export function SetupScreen({ busy, error, onSetup }: SetupScreenProps) {
   }
 
   return (
-    <section aria-labelledby="setup-title">
-      <OnboardingProgress step={2} />
-      <h1 id="setup-title" className="onb-title is-centered">
-        {isConfirm ? 'Confirm PIN' : 'Create PIN'}
-      </h1>
-      <PinPad
-        value={value}
-        onChange={setValue}
-        length={PIN_LENGTH}
-        disabled={busy}
-      />
-      <div className="onb-footer">
+    <section className="flow-screen" aria-labelledby="setup-title">
+      <div className="flow-screen-content">
+        <OnboardingProgress step={2} />
+        <h1 id="setup-title" className="onb-title is-centered">
+          {isConfirm ? 'Confirm PIN' : 'Create PIN'}
+        </h1>
+        <PinPad
+          value={value}
+          onChange={setValue}
+          length={PIN_LENGTH}
+          disabled={busy}
+        />
+      </div>
+      <div className="screen-actions">
         <ScreenError message={validationError ?? error} />
         <button
-          className="cta-pill"
+          className="flow-primary-action"
           type="button"
           disabled={!ready || busy}
           onClick={advance}

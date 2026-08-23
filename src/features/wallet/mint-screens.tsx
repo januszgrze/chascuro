@@ -205,79 +205,86 @@ export function ChooseMintScreen({
   }
 
   return (
-    <section className="choose-mint" aria-labelledby="choose-mint-title">
-      <header className="choose-mint-header">
-        <div className="choose-mint-topbar">
+    <section
+      className="choose-mint flow-screen"
+      aria-labelledby="choose-mint-title"
+    >
+      <div className="flow-screen-content">
+        <header className="choose-mint-header">
+          <div className="choose-mint-topbar">
+            <button
+              className="choose-mint-close"
+              type="button"
+              aria-label="Close"
+              disabled={confirmBusy}
+              onClick={onClose}
+            >
+              <CloseGlyph />
+            </button>
+          </div>
+          <div className="choose-mint-intro">
+            <h1 id="choose-mint-title" className="choose-mint-title">
+              {manage ? 'Your mints' : 'Choose a mint'}
+            </h1>
+            <p className="choose-mint-subtitle">{subtitle()}</p>
+          </div>
+        </header>
+        <div className="choose-mint-body">
+          <ul className="choose-mint-list">
+            {snapshot.federations.map((account) => {
+              const selectedMint = account.federation.federationId === draftId;
+              const subtitleLabel = mintNetworkLabel(
+                account.federation.network,
+              );
+              return (
+                <li key={account.federation.federationId}>
+                  <button
+                    className={`choose-mint-row${selectedMint ? ' is-selected' : ''}`}
+                    type="button"
+                    aria-pressed={selectedMint}
+                    onClick={() => {
+                      setDraftId(account.federation.federationId);
+                    }}
+                  >
+                    <span className="choose-mint-copy">
+                      <span className="choose-mint-name">
+                        {account.federation.displayName}
+                      </span>
+                      {subtitleLabel !== undefined && (
+                        <span className="choose-mint-sub">{subtitleLabel}</span>
+                      )}
+                    </span>
+                    <span className="choose-mint-trailing">
+                      <span className="choose-mint-balance">
+                        <BtcAmount amount={account.balanceMsats} />
+                      </span>
+                      <span
+                        className={`mint-check${selectedMint ? ' is-checked' : ''}`}
+                        aria-hidden="true"
+                      >
+                        {selectedMint ? <CheckIcon size={14} /> : null}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
           <button
-            className="choose-mint-close"
+            className="choose-mint-connect"
             type="button"
-            aria-label="Close"
             disabled={confirmBusy}
-            onClick={onClose}
+            onClick={onConnectMint}
           >
-            <CloseGlyph />
+            <PlusIcon size={16} />
+            Connect a mint
           </button>
         </div>
-        <div className="choose-mint-intro">
-          <h1 id="choose-mint-title" className="choose-mint-title">
-            {manage ? 'Your mints' : 'Choose a mint'}
-          </h1>
-          <p className="choose-mint-subtitle">{subtitle()}</p>
-        </div>
-      </header>
-      <div className="choose-mint-body">
-        <ul className="choose-mint-list">
-          {snapshot.federations.map((account) => {
-            const selectedMint = account.federation.federationId === draftId;
-            const subtitleLabel = mintNetworkLabel(account.federation.network);
-            return (
-              <li key={account.federation.federationId}>
-                <button
-                  className={`choose-mint-row${selectedMint ? ' is-selected' : ''}`}
-                  type="button"
-                  aria-pressed={selectedMint}
-                  onClick={() => {
-                    setDraftId(account.federation.federationId);
-                  }}
-                >
-                  <span className="choose-mint-copy">
-                    <span className="choose-mint-name">
-                      {account.federation.displayName}
-                    </span>
-                    {subtitleLabel !== undefined && (
-                      <span className="choose-mint-sub">{subtitleLabel}</span>
-                    )}
-                  </span>
-                  <span className="choose-mint-trailing">
-                    <span className="choose-mint-balance">
-                      <BtcAmount amount={account.balanceMsats} />
-                    </span>
-                    <span
-                      className={`mint-check${selectedMint ? ' is-checked' : ''}`}
-                      aria-hidden="true"
-                    >
-                      {selectedMint ? <CheckIcon size={14} /> : null}
-                    </span>
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-        <button
-          className="choose-mint-connect"
-          type="button"
-          disabled={confirmBusy}
-          onClick={onConnectMint}
-        >
-          <PlusIcon size={16} />
-          Connect a mint
-        </button>
       </div>
-      <div className="choose-mint-footer">
+      <div className="screen-actions">
         <ScreenError message={error} />
         <button
-          className="cta-pay choose-mint-confirm"
+          className="flow-primary-action"
           type="button"
           disabled={!confirmEnabled || confirmBusy}
           aria-busy={confirmBusy}
