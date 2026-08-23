@@ -1040,10 +1040,6 @@
   pointer-events: none;
 }
 
-.amount-keypad .keypad {
-  margin-top: auto;
-}
-
 .activity-feed {
   display: flex;
   flex: 1;
