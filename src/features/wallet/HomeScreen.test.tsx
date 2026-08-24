@@ -357,7 +357,7 @@ describe('HomeScreen scanned wallet input', () => {
 
     expect(onQuoteLnurlPayment).toHaveBeenCalledWith(offer.offerId, '50', '10');
     expect(screen.getByRole('heading', { name: 'Pay' })).toBeVisible();
-    expect(screen.getByText('alice@example.com')).toBeVisible();
+    expect(screen.queryByText('alice@example.com')).not.toBeInTheDocument();
     expect(props.onPayLightningQuote).not.toHaveBeenCalled();
   });
 

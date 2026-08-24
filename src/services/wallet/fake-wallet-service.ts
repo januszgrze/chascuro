@@ -132,15 +132,20 @@ export class FakeWalletService implements WalletService {
       signal?: AbortSignal,
     ): Promise<FederationCandidate> =>
       this.previewFederation(inviteCode, signal),
+    createJoinClientName: (): ActiveFederation['clientName'] =>
+      this.createJoinClientName(),
     join: (
       approval: FederationJoinApproval,
+      joinClientName: ActiveFederation['clientName'],
       signal?: AbortSignal,
-    ): Promise<ActiveFederation> => this.joinFederation(approval, signal),
+    ): Promise<ActiveFederation> =>
+      this.joinFederation(approval, joinClientName, signal),
     reconcilePendingJoin: (
       pending: FederationDescriptor,
+      pendingClientName: ActiveFederation['clientName'] | undefined,
       signal?: AbortSignal,
     ): Promise<ActiveFederation | undefined> =>
-      this.reconcilePendingJoin(pending, signal),
+      this.reconcilePendingJoin(pending, pendingClientName, signal),
     getCapabilities: (signal?: AbortSignal): Promise<FederationCapabilities> =>
       this.getCapabilities(signal),
     select: (federationId: ActiveFederation['federationId']): Promise<void> =>
@@ -240,6 +245,7 @@ export class FakeWalletService implements WalletService {
   private joinInFlight:
     | {
         candidateId: string;
+        clientName: ActiveFederation['clientName'];
         promise: Promise<ActiveFederation>;
       }
     | undefined;
@@ -397,9 +403,13 @@ export class FakeWalletService implements WalletService {
 
   private async joinFederation(
     approval: FederationJoinApproval,
+    joinClientName: ActiveFederation['clientName'],
     signal?: AbortSignal,
   ): Promise<ActiveFederation> {
-    if (this.joinInFlight?.candidateId === approval.candidateId) {
+    if (
+      this.joinInFlight?.candidateId === approval.candidateId &&
+      this.joinInFlight.clientName === joinClientName
+    ) {
       return this.joinInFlight.promise;
     }
 
@@ -418,9 +428,18 @@ export class FakeWalletService implements WalletService {
       throw new WalletError('candidate_expired');
     }
 
-    const promise = this.performJoin(pending, signal);
+    if (
+      [...this.accounts.values()].some(
+        (account) => account.federation.clientName === joinClientName,
+      )
+    ) {
+      throw new WalletError('invalid_invite_code');
+    }
+
+    const promise = this.performJoin(pending, joinClientName, signal);
     this.joinInFlight = {
       candidateId: approval.candidateId,
+      clientName: joinClientName,
       promise,
     };
 
@@ -436,6 +455,7 @@ export class FakeWalletService implements WalletService {
 
   private async performJoin(
     pending: PendingCandidate,
+    joinClientName: ActiveFederation['clientName'],
     signal?: AbortSignal,
   ): Promise<ActiveFederation> {
     this.updateSnapshot({
@@ -456,7 +476,7 @@ export class FakeWalletService implements WalletService {
         network: pending.candidate.network,
         modules: pending.candidate.modules,
         guardianCount: pending.candidate.guardianCount,
-        clientName: clientName(this.idFactory()),
+        clientName: joinClientName,
         joinedAtMs: this.clock(),
       });
 
@@ -498,6 +518,7 @@ export class FakeWalletService implements WalletService {
 
   private async reconcilePendingJoin(
     pending: FederationDescriptor,
+    pendingClientName: ActiveFederation['clientName'] | undefined,
     signal?: AbortSignal,
   ): Promise<ActiveFederation | undefined> {
     this.assertReady();
@@ -505,7 +526,8 @@ export class FakeWalletService implements WalletService {
     await wait(this.latencyMs, [signal, this.lifetime.signal]);
     const activeFederation: ActiveFederation = Object.freeze({
       ...pending,
-      clientName: clientName(`reconciled-${this.safeId()}`),
+      clientName:
+        pendingClientName ?? clientName(`reconciled-${this.safeId()}`),
       joinedAtMs: this.clock(),
     });
     this.accounts.set(activeFederation.federationId, {
@@ -520,6 +542,10 @@ export class FakeWalletService implements WalletService {
       error: undefined,
     });
     return activeFederation;
+  }
+
+  private createJoinClientName(): ActiveFederation['clientName'] {
+    return clientName(this.idFactory());
   }
 
   private async selectFederation(

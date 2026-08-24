@@ -21,9 +21,12 @@ describe('FakeWalletService', () => {
     await service.open();
 
     await expect(
-      service.federation.join({
-        candidateId: candidateId('missing'),
-      } as never),
+      service.federation.join(
+        {
+          candidateId: candidateId('missing'),
+        } as never,
+        service.federation.createJoinClientName(),
+      ),
     ).rejects.toMatchObject({ code: 'candidate_expired' });
 
     const candidate = await service.federation.preview(
@@ -36,7 +39,10 @@ describe('FakeWalletService', () => {
       'wss://guardian-4.demo.invalid',
     ]);
     const approval = approveFederationJoin(candidate, 1_000);
-    const federation = await service.federation.join(approval);
+    const federation = await service.federation.join(
+      approval,
+      service.federation.createJoinClientName(),
+    );
 
     expect(federation.federationId).toBe(candidate.federationId);
     expect(service.getSnapshot().balanceMsats).toBe(msats(25_000_000n));
@@ -55,8 +61,9 @@ describe('FakeWalletService', () => {
     );
     const approval = approveFederationJoin(candidate, 1_000);
 
-    const first = service.federation.join(approval);
-    const second = service.federation.join(approval);
+    const joinClientName = service.federation.createJoinClientName();
+    const first = service.federation.join(approval, joinClientName);
+    const second = service.federation.join(approval, joinClientName);
 
     await expect(first).resolves.toEqual(await second);
     expect(nextId).toBe(2);
@@ -76,7 +83,10 @@ describe('FakeWalletService', () => {
       sensitiveInput('fedimint invite code'),
     );
     const approval = approveFederationJoin(candidate, 1_000);
-    const joining = service.federation.join(approval);
+    const joining = service.federation.join(
+      approval,
+      service.federation.createJoinClientName(),
+    );
 
     await service.close();
 
@@ -219,6 +229,9 @@ async function createJoinedService(options: {
   const candidate = await service.federation.preview(
     sensitiveInput('fedimint invite code'),
   );
-  await service.federation.join(approveFederationJoin(candidate, 1_000));
+  await service.federation.join(
+    approveFederationJoin(candidate, 1_000),
+    service.federation.createJoinClientName(),
+  );
   return service;
 }

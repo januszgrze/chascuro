@@ -21,11 +21,15 @@ import { HomeScreen } from '../features/wallet/HomeScreen';
 import { ChatController } from '../services/chat/chat-controller';
 import { FakeChatService } from '../services/chat/fake-chat-service';
 import type { ChatSessionLifecycle } from '../services/chat/chat-session-lifecycle';
-import { encryptedRecordStorageId } from '../services/persistence/encrypted-record-store';
+import {
+  EncryptedRecordStore,
+  encryptedRecordStorageId,
+} from '../services/persistence/encrypted-record-store';
 import type { WalletDataEraseReport } from '../services/persistence/erase-wallet-data';
 import {
   PENDING_FEDERATION_JOIN_RECORD_ID,
   PENDING_FEDERATION_JOIN_RECORD_KIND,
+  pendingFederationJoinRecordSchema,
 } from '../services/persistence/schemas/pending-federation-join-record';
 import { WALLET_PROFILE_RECORD_KIND } from '../services/persistence/schemas/wallet-profile';
 import type { VaultEnvelope } from '../services/persistence/vault';
@@ -57,6 +61,7 @@ const controllers: WalletAppController[] = [];
 class FaultInjectingVaultStore extends MemoryVaultStore {
   readonly failedPutIds: string[] = [];
   private failNextPutPredicate: ((recordId: string) => boolean) | undefined;
+  private failNextDeletePredicate: ((recordId: string) => boolean) | undefined;
   private delayedPut:
     | {
         predicate: (recordId: string) => boolean;
@@ -67,6 +72,10 @@ class FaultInjectingVaultStore extends MemoryVaultStore {
 
   failNextPutMatching(predicate: (recordId: string) => boolean): void {
     this.failNextPutPredicate = predicate;
+  }
+
+  failNextDeleteMatching(predicate: (recordId: string) => boolean): void {
+    this.failNextDeletePredicate = predicate;
   }
 
   delayNextPutMatching(predicate: (recordId: string) => boolean) {
@@ -92,6 +101,14 @@ class FaultInjectingVaultStore extends MemoryVaultStore {
       await delayedPut.release.promise;
     }
     await super.put(recordId, envelope);
+  }
+
+  override async delete(recordId: string): Promise<void> {
+    if (this.failNextDeletePredicate?.(recordId) === true) {
+      this.failNextDeletePredicate = undefined;
+      throw new Error('Injected record delete failure.');
+    }
+    await super.delete(recordId);
   }
 }
 
@@ -207,6 +224,27 @@ function createService(latencyMs = 0): FakeWalletService {
     clock: () => 1_000,
     idFactory: () => `controller-test-${++nextId}`,
     autoSettlePayments: false,
+  });
+}
+
+function createFederationService(
+  id: string,
+  displayName: string,
+): FakeWalletService {
+  let nextId = 0;
+  return new FakeWalletService({
+    latencyMs: 0,
+    clock: () => 1_000,
+    idFactory: () => `${id}-client-${++nextId}`,
+    autoSettlePayments: false,
+    preview: {
+      federationId: federationId(id),
+      displayName,
+      network: 'signet',
+      modules: ['ln', 'mint', 'wallet'],
+      guardianCount: 4,
+      guardianOrigins: [`wss://${id}.example`],
+    },
   });
 }
 
@@ -1017,7 +1055,7 @@ describe('WalletAppController feature safety', () => {
     });
   });
 
-  it('reconciles a durable pending join after the SDK joined but the profile write failed', async () => {
+  it('keeps first-mint recovery valid after the SDK joined but the profile write failed', async () => {
     const first = await createInitializedController();
     await first.controller.previewFederation(INVITE);
     expect(first.controller.getState().phase).toBe('review');
@@ -1063,6 +1101,145 @@ describe('WalletAppController feature safety', () => {
       },
     });
     expect(await first.store.get(pendingStorageId)).toBeUndefined();
+  });
+
+  it('recovers and appends a second mint whose SDK join outran its profile write', async () => {
+    const first = await createJoinedController({
+      service: createFederationService('fed-a', 'Federation A'),
+    });
+    await first.controller.lock();
+
+    const joining = await openStoredController(first.store, {
+      service: createFederationService('fed-b', 'Federation B'),
+    });
+    await joining.controller.previewFederation(INVITE);
+    const profileStorageId = encryptedRecordStorageId(
+      WALLET_RECORD_ID,
+      WALLET_PROFILE_RECORD_KIND,
+      WALLET_RECORD_ID,
+    );
+    first.store.failNextPutMatching(
+      (recordId) => recordId === profileStorageId,
+    );
+    await joining.controller.joinFederation(true);
+
+    expect(joining.controller.getState()).toMatchObject({
+      phase: 'locked',
+      error: expect.stringContaining('reconcile'),
+    });
+    const pendingStorageId = encryptedRecordStorageId(
+      WALLET_RECORD_ID,
+      PENDING_FEDERATION_JOIN_RECORD_KIND,
+      PENDING_FEDERATION_JOIN_RECORD_ID,
+    );
+    expect(await first.store.get(pendingStorageId)).toBeDefined();
+
+    const restoredService = createFederationService('fed-b', 'Federation B');
+    const reconcileSpy = vi.spyOn(
+      restoredService.federation,
+      'reconcilePendingJoin',
+    );
+    const restored = await openStoredController(first.store, {
+      service: restoredService,
+    });
+
+    expect(reconcileSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ federationId: 'fed-b' }),
+      'fed-b-client-2',
+      expect.any(AbortSignal),
+    );
+    expect(restored.controller.getState()).toMatchObject({
+      phase: 'home',
+      walletSnapshot: {
+        activeFederation: { federationId: 'fed-b' },
+        federations: [
+          { federation: { federationId: 'fed-a' } },
+          { federation: { federationId: 'fed-b' } },
+        ],
+      },
+    });
+    expect(await first.store.get(pendingStorageId)).toBeUndefined();
+  });
+
+  it('cleans a stale pending marker for an already-persisted mint idempotently', async () => {
+    const first = await createInitializedController();
+    await first.controller.previewFederation(INVITE);
+    const pendingStorageId = encryptedRecordStorageId(
+      WALLET_RECORD_ID,
+      PENDING_FEDERATION_JOIN_RECORD_KIND,
+      PENDING_FEDERATION_JOIN_RECORD_ID,
+    );
+    first.store.failNextDeleteMatching(
+      (recordId) => recordId === pendingStorageId,
+    );
+    await first.controller.joinFederation(true);
+
+    expect(first.controller.getState().phase).toBe('home');
+    expect(await first.store.get(pendingStorageId)).toBeDefined();
+    await first.controller.lock();
+
+    const restoredService = createService();
+    const reconcileSpy = vi.spyOn(
+      restoredService.federation,
+      'reconcilePendingJoin',
+    );
+    const restored = await openStoredController(first.store, {
+      service: restoredService,
+    });
+
+    expect(restored.controller.getState().phase).toBe('home');
+    expect(reconcileSpy).not.toHaveBeenCalled();
+    expect(await first.store.get(pendingStorageId)).toBeUndefined();
+  });
+
+  it('retains a legacy pending marker that cannot identify a second client', async () => {
+    const first = await createJoinedController({
+      service: createFederationService('fed-a', 'Federation A'),
+    });
+    await first.controller.lock();
+
+    const records = await EncryptedRecordStore.open({
+      storage: first.store,
+      passphrase: PASSPHRASE,
+      namespace: WALLET_RECORD_ID,
+      crypto: TEST_CRYPTO,
+      now: () => 1_000,
+    });
+    await records.put(
+      pendingFederationJoinRecordSchema,
+      PENDING_FEDERATION_JOIN_RECORD_ID,
+      {
+        version: 1,
+        federationId: 'fed-b',
+        displayName: 'Federation B',
+        network: 'signet',
+        modules: ['ln', 'mint', 'wallet'],
+        guardianCount: 4,
+        submittedAtMs: 1_000,
+      },
+    );
+    records.lock();
+
+    const restoredService = createFederationService('fed-b', 'Federation B');
+    const reconcileSpy = vi.spyOn(
+      restoredService.federation,
+      'reconcilePendingJoin',
+    );
+    const restored = await openStoredController(first.store, {
+      service: restoredService,
+    });
+    const pendingStorageId = encryptedRecordStorageId(
+      WALLET_RECORD_ID,
+      PENDING_FEDERATION_JOIN_RECORD_KIND,
+      PENDING_FEDERATION_JOIN_RECORD_ID,
+    );
+
+    expect(restored.controller.getState()).toMatchObject({
+      phase: 'locked',
+      error: expect.stringContaining('reconcile'),
+    });
+    expect(reconcileSpy).not.toHaveBeenCalled();
+    expect(await first.store.get(pendingStorageId)).toBeDefined();
   });
 
   it('retains an ambiguous pending join marker when reconciliation cannot prove success', async () => {

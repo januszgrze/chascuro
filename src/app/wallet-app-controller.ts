@@ -3,6 +3,7 @@ import {
   confirmEcashRedeem,
   confirmEcashSpend,
   confirmLightningQuote,
+  clientName,
   federationId,
   isTerminalOperationStatus,
   MAX_CHAT_PAYMENT_SATS,
@@ -440,55 +441,54 @@ export class WalletAppController {
         federations: record.federations,
         signal: token.signal,
       });
-      if (
-        record.activeFederation === undefined &&
-        pendingJoinRecord !== undefined
-      ) {
+      if (pendingJoinRecord !== undefined) {
         const pending = pendingJoinRecord.payload;
-        const reconciled = await this.service.federation.reconcilePendingJoin(
-          {
-            federationId: federationId(pending.federationId),
-            displayName: pending.displayName,
-            network: normalizeBitcoinNetwork(pending.network),
-            modules: pending.modules,
-            guardianCount: pending.guardianCount,
-          },
-          token.signal,
+        const persistedFederation = record.federations.find(
+          (federation) => federation.federationId === pending.federationId,
         );
-        if (reconciled !== undefined) {
+        if (persistedFederation === undefined) {
+          if (
+            pending.clientName === undefined &&
+            record.federations.length > 0
+          ) {
+            // Legacy markers only identify the original fixed SDK client. A
+            // marker beside an existing mint cannot safely identify another
+            // client, so retain it and fail closed for manual recovery.
+            throw new WalletError('operation_reconciliation_required');
+          }
+          const reconciled = await this.service.federation.reconcilePendingJoin(
+            {
+              federationId: federationId(pending.federationId),
+              displayName: pending.displayName,
+              network: normalizeBitcoinNetwork(pending.network),
+              modules: pending.modules,
+              guardianCount: pending.guardianCount,
+            },
+            pending.clientName === undefined
+              ? undefined
+              : clientName(pending.clientName),
+            token.signal,
+          );
+          if (reconciled === undefined) {
+            throw new WalletError('operation_reconciliation_required');
+          }
           profile = createWalletProfileV2(record.mode, {
             adapterVersion: profile.adapterVersion,
             identity: profile.identity,
             activeFederation: reconciled,
-            federations: [reconciled],
+            federations: [...record.federations, reconciled],
           });
           await records.put(walletProfileV2Schema, WALLET_RECORD_ID, profile);
           record = readWalletProfileV2(profile);
-        } else {
-          throw new WalletError('operation_reconciliation_required');
         }
-        if (record.activeFederation !== undefined) {
-          try {
-            await records.delete(
-              pendingFederationJoinRecordSchema,
-              PENDING_FEDERATION_JOIN_RECORD_ID,
-            );
-          } catch {
-            // A stale sanitized marker is harmless once the active profile is
-            // durable; retry deletion on the next unlock.
-          }
-        }
-      } else if (
-        record.activeFederation !== undefined &&
-        pendingJoinRecord !== undefined
-      ) {
         try {
           await records.delete(
             pendingFederationJoinRecordSchema,
             PENDING_FEDERATION_JOIN_RECORD_ID,
           );
         } catch {
-          // The active profile remains authoritative.
+          // The profile already contains this federation. Retry sanitized
+          // marker cleanup on the next unlock.
         }
       }
       if (record.activeFederation !== undefined) {
@@ -1865,6 +1865,7 @@ export class WalletAppController {
         this.now(),
         mainnetRiskAcknowledged,
       );
+      const joinClientName = this.service.federation.createJoinClientName();
       await records.put(
         pendingFederationJoinRecordSchema,
         PENDING_FEDERATION_JOIN_RECORD_ID,
@@ -1875,12 +1876,14 @@ export class WalletAppController {
           network: candidate.network,
           modules: candidate.modules,
           guardianCount: candidate.guardianCount,
+          clientName: joinClientName,
           submittedAtMs: this.now(),
         },
       );
       pendingJoinPersisted = true;
       const activeFederation = await this.service.federation.join(
         approval,
+        joinClientName,
         token.signal,
       );
       if (!this.guard.isCurrent(token)) {

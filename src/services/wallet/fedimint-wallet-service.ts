@@ -167,15 +167,20 @@ export class FedimintWalletService implements WalletService {
       signal?: AbortSignal,
     ): Promise<FederationCandidate> =>
       this.previewFederation(inviteCode, signal),
+    createJoinClientName: (): ActiveFederation['clientName'] =>
+      this.createJoinClientName(),
     join: (
       approval: FederationJoinApproval,
+      joinClientName: ActiveFederation['clientName'],
       signal?: AbortSignal,
-    ): Promise<ActiveFederation> => this.joinFederation(approval, signal),
+    ): Promise<ActiveFederation> =>
+      this.joinFederation(approval, joinClientName, signal),
     reconcilePendingJoin: (
       pending: FederationDescriptor,
+      pendingClientName: ActiveFederation['clientName'] | undefined,
       signal?: AbortSignal,
     ): Promise<ActiveFederation | undefined> =>
-      this.reconcilePendingJoin(pending, signal),
+      this.reconcilePendingJoin(pending, pendingClientName, signal),
     getCapabilities: (signal?: AbortSignal): Promise<FederationCapabilities> =>
       this.getCapabilities(signal),
     select: (federationId: ActiveFederation['federationId']): Promise<void> =>
@@ -287,6 +292,7 @@ export class FedimintWalletService implements WalletService {
   private joinInFlight:
     | {
         candidateId: string;
+        clientName: ActiveFederation['clientName'];
         promise: Promise<ActiveFederation>;
       }
     | undefined;
@@ -1032,9 +1038,13 @@ export class FedimintWalletService implements WalletService {
 
   async joinFederation(
     approval: FederationJoinApproval,
+    joinClientName: ActiveFederation['clientName'],
     signal?: AbortSignal,
   ): Promise<ActiveFederation> {
-    if (this.joinInFlight?.candidateId === approval.candidateId) {
+    if (
+      this.joinInFlight?.candidateId === approval.candidateId &&
+      this.joinInFlight.clientName === joinClientName
+    ) {
       return this.joinInFlight.promise;
     }
 
@@ -1055,9 +1065,18 @@ export class FedimintWalletService implements WalletService {
       throw new WalletError('invalid_invite_code');
     }
 
-    const promise = this.performJoin(pending, signal);
+    if (
+      [...this.clients.values()].some(
+        (client) => client.federation.clientName === joinClientName,
+      )
+    ) {
+      throw new WalletError('invalid_invite_code');
+    }
+
+    const promise = this.performJoin(pending, joinClientName, signal);
     this.joinInFlight = {
       candidateId: approval.candidateId,
+      clientName: joinClientName,
       promise,
     };
     const clearInFlight = () => {
@@ -1072,13 +1091,12 @@ export class FedimintWalletService implements WalletService {
 
   private async performJoin(
     pending: PendingCandidate,
+    joinClientName: ActiveFederation['clientName'],
     signal?: AbortSignal,
   ): Promise<ActiveFederation> {
     const generation = this.generation;
     const director = this.requireDirector();
-    const clientNameValue =
-      this.clients.size === 0 ? SDK_DEFAULT_CLIENT_NAME : crypto.randomUUID();
-    const wallet = director.createNamedWallet(clientNameValue);
+    const wallet = director.createNamedWallet(joinClientName);
     this.publishAccounts({
       lifecycle: 'joining',
       error: undefined,
@@ -1088,7 +1106,7 @@ export class FedimintWalletService implements WalletService {
       signal?.throwIfAborted();
       const joined = await wallet.joinFederation(
         pending.inviteCode,
-        clientNameValue,
+        joinClientName,
       );
       if (generation !== this.generation) {
         throw new DOMException('Request aborted.', 'AbortError');
@@ -1104,7 +1122,7 @@ export class FedimintWalletService implements WalletService {
         network: pending.candidate.network,
         modules: pending.candidate.modules,
         guardianCount: pending.candidate.guardianCount,
-        clientName: clientName(clientNameValue),
+        clientName: joinClientName,
         joinedAtMs: Date.now(),
       });
       this.candidates.clear();
@@ -1142,19 +1160,18 @@ export class FedimintWalletService implements WalletService {
 
   private async reconcilePendingJoin(
     pending: FederationDescriptor,
+    pendingClientName: ActiveFederation['clientName'] | undefined,
     signal?: AbortSignal,
   ): Promise<ActiveFederation | undefined> {
-    if (this.snapshot.activeFederation !== undefined) {
-      return this.snapshot.activeFederation;
-    }
-
     const director = this.requireDirector();
     const generation = this.generation;
+    const pendingClientNameValue =
+      pendingClientName ?? clientName(SDK_DEFAULT_CLIENT_NAME);
     signal?.throwIfAborted();
-    const wallet = director.createNamedWallet(SDK_DEFAULT_CLIENT_NAME);
+    const wallet = director.createNamedWallet(pendingClientNameValue);
     let opened: boolean;
     try {
-      opened = await wallet.open(SDK_DEFAULT_CLIENT_NAME);
+      opened = await wallet.open(pendingClientNameValue);
     } catch {
       throw new WalletError('operation_reconciliation_required');
     }
@@ -1177,7 +1194,7 @@ export class FedimintWalletService implements WalletService {
 
     const activeFederation: ActiveFederation = Object.freeze({
       ...pending,
-      clientName: clientName(SDK_DEFAULT_CLIENT_NAME),
+      clientName: pendingClientNameValue,
       joinedAtMs: Date.now(),
     });
     const balanceMsats = await this.readBalance(wallet);
@@ -1197,6 +1214,12 @@ export class FedimintWalletService implements WalletService {
     });
     this.subscribeToBalance(client, generation);
     return activeFederation;
+  }
+
+  private createJoinClientName(): ActiveFederation['clientName'] {
+    return clientName(
+      this.clients.size === 0 ? SDK_DEFAULT_CLIENT_NAME : crypto.randomUUID(),
+    );
   }
 
   private async selectFederation(
