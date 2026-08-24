@@ -149,15 +149,19 @@ textarea {
 }
 
 /*
- * Standalone WebKit can report a dynamic viewport shorter than 100vh. Keep
- * the entire root chain at the full PWA height so it does not clip the frame.
+ * Keep the standalone root chain stable, but size the padded app frame to the
+ * visible viewport. On iOS, forcing the frame itself to 100vh can place its
+ * safe-area bottom edge below the screen and clip the wallet navigation.
  */
 @media (display-mode: standalone) {
   html,
   body,
-  #root,
-  .app-frame {
+  #root {
     height: 100vh;
+  }
+
+  .app-frame {
+    height: 100dvh;
   }
 }
 
