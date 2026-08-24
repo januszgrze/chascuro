@@ -18,6 +18,12 @@ npm run dev
 Open the local URL printed by Vite. For a deterministic simulated wallet, run
 `npm run dev:fake` instead.
 
+The wallet can join more than one Fedimint mint on the same seed. Home shows a
+combined total. Lightning send, Lightning receive, and ecash send pick a mint
+on the confirm screen (Pay invoice, Create invoice, or Create link). Amount
+entry and invoice scanning stay mint-agnostic. Ecash redeem still routes to
+the matching joined mint. Leaving a mint is not supported yet.
+
 ## Build it
 
 ```sh

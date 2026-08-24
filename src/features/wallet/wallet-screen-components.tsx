@@ -98,6 +98,8 @@ export function ResultScreen({
   onBack,
   error,
   hold = false,
+  icon,
+  action,
   children,
 }: {
   titleId: string;
@@ -114,11 +116,13 @@ export function ResultScreen({
    * the shared elements stay put instead of re-animating.
    */
   hold?: boolean;
-  children: ReactNode;
+  icon?: ReactNode;
+  action: ReactNode;
+  children?: ReactNode;
 }) {
   return (
     <section
-      className={`result-screen result-screen--${tone}${hold ? ' result-screen--hold' : ''}`}
+      className={`result-screen flow-screen result-screen--${tone}${hold ? ' result-screen--hold' : ''}`}
       aria-labelledby={titleId}
     >
       {onBack !== undefined && (
@@ -133,14 +137,15 @@ export function ResultScreen({
           </button>
         </div>
       )}
-      <div className="result-body">
+      <div className="result-body flow-screen-content">
         <div className="result-group">
           <div className={`result-icon result-icon--${tone}`}>
-            {direction === 'in' ? (
-              <ArrowDownIcon size={52} />
-            ) : (
-              <ArrowUpIcon size={52} />
-            )}
+            {icon ??
+              (direction === 'in' ? (
+                <ArrowDownIcon size={52} />
+              ) : (
+                <ArrowUpIcon size={52} />
+              ))}
           </div>
           <div className="result-copy">
             <h1 id={titleId} className="result-title">
@@ -155,9 +160,14 @@ export function ResultScreen({
             {subtitle !== undefined && <p className="result-sub">{subtitle}</p>}
           </div>
         </div>
-        <ScreenError message={error} />
-        {children}
+        {(error !== undefined || children !== undefined) && (
+          <div className="result-support">
+            <ScreenError message={error} />
+            {children}
+          </div>
+        )}
       </div>
+      <div className="screen-actions result-actions">{action}</div>
     </section>
   );
 }
@@ -212,7 +222,7 @@ export function CopyButton({
 
   return (
     <button
-      className="primary-button"
+      className="secondary-button"
       type="button"
       disabled={disabled}
       onClick={() => void copy()}

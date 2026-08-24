@@ -33,6 +33,7 @@ export interface WalletRecord {
   mode: WalletServiceKind;
   identity?: WalletIdentityStateV2;
   activeFederation?: ActiveFederation;
+  federations: readonly ActiveFederation[];
 }
 
 /**
@@ -116,12 +117,14 @@ export function parsePersistedWalletRecord(
 
 export function readWalletRecord(value: unknown): WalletRecord {
   const persisted = parsePersistedWalletRecord(value);
+  const activeFederation =
+    persisted.activeFederation === undefined
+      ? undefined
+      : parseActiveFederation(persisted.activeFederation);
   return Object.freeze({
     mode: persisted.mode,
-    activeFederation:
-      persisted.activeFederation === undefined
-        ? undefined
-        : parseActiveFederation(persisted.activeFederation),
+    activeFederation,
+    federations: activeFederation === undefined ? [] : [activeFederation],
   });
 }
 
@@ -131,8 +134,12 @@ export function createWalletProfileV2(
     adapterVersion: string;
     identity?: WalletIdentityStateV2;
     activeFederation?: ActiveFederation;
+    federations?: readonly ActiveFederation[];
   },
 ): WalletProfileV2 {
+  const federations =
+    input.federations ??
+    (input.activeFederation === undefined ? [] : [input.activeFederation]);
   return parseWalletProfileV2(
     serializeBigInts({
       version: 2,
@@ -143,19 +150,30 @@ export function createWalletProfileV2(
         input.activeFederation === undefined
           ? undefined
           : serializeActiveFederation(input.activeFederation),
+      ...(federations.length === 0
+        ? {}
+        : { federations: federations.map(serializeActiveFederation) }),
     }),
   );
 }
 
 export function readWalletProfileV2(value: unknown): WalletRecord {
   const persisted = parseWalletProfileV2(value);
+  const activeFederation =
+    persisted.activeFederation === undefined
+      ? undefined
+      : parseActiveFederation(persisted.activeFederation);
+  const federations =
+    persisted.federations === undefined
+      ? activeFederation === undefined
+        ? []
+        : [activeFederation]
+      : persisted.federations.map(parseActiveFederation);
   return Object.freeze({
     mode: persisted.mode,
     identity: persisted.identity,
-    activeFederation:
-      persisted.activeFederation === undefined
-        ? undefined
-        : parseActiveFederation(persisted.activeFederation),
+    activeFederation,
+    federations,
   });
 }
 

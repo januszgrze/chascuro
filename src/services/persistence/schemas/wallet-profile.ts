@@ -40,6 +40,18 @@ export interface WalletProfileV2 {
   readonly adapterVersion: string;
   readonly identity: WalletIdentityStateV2;
   readonly activeFederation?: PersistedActiveFederation;
+  readonly federations?: readonly PersistedActiveFederation[];
+}
+
+export function listWalletProfileFederations(
+  profile: WalletProfileV2,
+): readonly PersistedActiveFederation[] {
+  if (profile.federations !== undefined) {
+    return profile.federations;
+  }
+  return profile.activeFederation === undefined
+    ? []
+    : [profile.activeFederation];
 }
 
 export const walletProfileV2Schema: EncryptedRecordSchema<WalletProfileV2> =
@@ -77,7 +89,7 @@ export function parseWalletProfileV2(value: unknown): WalletProfileV2 {
     !hasAllowedExactKeys(
       value,
       ['version', 'mode', 'adapterVersion', 'identity'],
-      ['activeFederation'],
+      ['activeFederation', 'federations'],
     ) ||
     value.version !== WALLET_PROFILE_V2_VERSION ||
     !isWalletMode(value.mode) ||
@@ -91,6 +103,10 @@ export function parseWalletProfileV2(value: unknown): WalletProfileV2 {
     value.activeFederation === undefined
       ? undefined
       : parseActiveFederation(value.activeFederation);
+  const federations =
+    value.federations === undefined
+      ? undefined
+      : parseFederations(value.federations);
 
   return Object.freeze({
     version: WALLET_PROFILE_V2_VERSION,
@@ -98,6 +114,7 @@ export function parseWalletProfileV2(value: unknown): WalletProfileV2 {
     adapterVersion: value.adapterVersion,
     identity,
     ...(activeFederation === undefined ? {} : { activeFederation }),
+    ...(federations === undefined ? {} : { federations }),
   });
 }
 
@@ -146,6 +163,22 @@ function parseWalletIdentity(value: unknown): WalletIdentityStateV2 {
       ? {}
       : { backupConfirmedAtMs: value.backupConfirmedAtMs }),
   });
+}
+
+function parseFederations(
+  value: unknown,
+): readonly PersistedActiveFederation[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new TypeError('Stored federation list is invalid.');
+  }
+
+  const federations = value.map(parseActiveFederation);
+  const ids = new Set(federations.map((federation) => federation.federationId));
+  if (ids.size !== federations.length) {
+    throw new TypeError('Stored federation list is invalid.');
+  }
+
+  return Object.freeze(federations);
 }
 
 function parseActiveFederation(value: unknown): PersistedActiveFederation {

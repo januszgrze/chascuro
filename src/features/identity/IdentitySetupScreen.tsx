@@ -159,39 +159,44 @@ export function IdentitySetupScreen({
   if (mode === 'create' && mnemonic !== undefined) {
     const columns = [words.slice(0, 6), words.slice(6)];
     return (
-      <section className="onb-recovery" aria-labelledby="identity-title">
-        <OnboardingProgress step={1} />
-        <h1 id="identity-title" className="onb-title">
-          Your recovery phrase
-        </h1>
-        <div className="warn-banner">
-          <WarningTriangleIcon />
-          <p>
-            Write these down in order. Anyone with them can take your money —
-            Chascuro can't recover them.
-          </p>
+      <section
+        className="onb-recovery flow-screen"
+        aria-labelledby="identity-title"
+      >
+        <div className="flow-screen-content">
+          <OnboardingProgress step={1} />
+          <h1 id="identity-title" className="onb-title">
+            Your recovery phrase
+          </h1>
+          <div className="warn-banner">
+            <WarningTriangleIcon />
+            <p>
+              Write these down in order. Anyone with them can take your money —
+              Chascuro can't recover them.
+            </p>
+          </div>
+          <div className="word-grid">
+            {columns.map((column, columnIndex) => (
+              <ol
+                className="word-col"
+                key={columnIndex}
+                start={columnIndex * 6 + 1}
+                aria-label={`Recovery words ${columnIndex * 6 + 1} to ${columnIndex * 6 + column.length}`}
+              >
+                {column.map((word, wordIndex) => {
+                  const position = columnIndex * 6 + wordIndex + 1;
+                  return (
+                    <li className="word-row" key={`${position}-${word}`}>
+                      <span className="word-num">{position}</span>
+                      <span className="word-text">{word}</span>
+                    </li>
+                  );
+                })}
+              </ol>
+            ))}
+          </div>
         </div>
-        <div className="word-grid">
-          {columns.map((column, columnIndex) => (
-            <ol
-              className="word-col"
-              key={columnIndex}
-              start={columnIndex * 6 + 1}
-              aria-label={`Recovery words ${columnIndex * 6 + 1} to ${columnIndex * 6 + column.length}`}
-            >
-              {column.map((word, wordIndex) => {
-                const position = columnIndex * 6 + wordIndex + 1;
-                return (
-                  <li className="word-row" key={`${position}-${word}`}>
-                    <span className="word-num">{position}</span>
-                    <span className="word-text">{word}</span>
-                  </li>
-                );
-              })}
-            </ol>
-          ))}
-        </div>
-        <div className="onb-footer">
+        <div className="screen-actions">
           <ScreenError message={error} />
           {copied ? (
             <p className="copy-status" role="status">
@@ -208,7 +213,7 @@ export function IdentitySetupScreen({
             Copy to clipboard
           </button>
           <button
-            className="cta-pill"
+            className="flow-primary-action"
             type="button"
             disabled={busy}
             onClick={() => void confirmBackup()}
@@ -224,59 +229,64 @@ export function IdentitySetupScreen({
     const columns = [restoreWords.slice(0, 6), restoreWords.slice(6)];
 
     return (
-      <section className="onb-restore" aria-labelledby="identity-title">
-        <OnboardingProgress step={1} />
-        <h1 id="identity-title" className="onb-title">
-          Restore your wallet
-        </h1>
-        <p className="onb-restore-helper">
-          Enter your 12-word recovery phrase in order. Only you ever see these
-          words.
-        </p>
-        <div
-          className="restore-word-grid"
-          role="group"
-          aria-label="Recovery phrase"
-        >
-          {columns.map((column, columnIndex) => (
-            <div className="restore-word-col" key={columnIndex}>
-              {column.map((word, wordIndex) => {
-                const index = columnIndex * 6 + wordIndex;
-                const position = index + 1;
-                return (
-                  <label
-                    className={
-                      index === restoreFocusIndex
-                        ? 'restore-word-row is-active'
-                        : 'restore-word-row'
-                    }
-                    key={position}
-                  >
-                    <span className="word-num">{position}</span>
-                    <input
-                      aria-label={`Recovery word ${position}`}
-                      autoCapitalize="none"
-                      autoComplete="off"
-                      autoCorrect="off"
-                      className="restore-word-input"
-                      disabled={busy}
-                      inputMode="text"
-                      spellCheck={false}
-                      type="text"
-                      value={word}
-                      onChange={(event) => updateRestoreWord(index, event)}
-                      onFocus={() => setRestoreFocusIndex(index)}
-                      onPaste={(event) =>
-                        pasteRestoreWordsFromField(index, event)
+      <section
+        className="onb-restore flow-screen"
+        aria-labelledby="identity-title"
+      >
+        <div className="flow-screen-content">
+          <OnboardingProgress step={1} />
+          <h1 id="identity-title" className="onb-title">
+            Restore your wallet
+          </h1>
+          <p className="onb-restore-helper">
+            Enter your 12-word recovery phrase in order. Only you ever see these
+            words.
+          </p>
+          <div
+            className="restore-word-grid"
+            role="group"
+            aria-label="Recovery phrase"
+          >
+            {columns.map((column, columnIndex) => (
+              <div className="restore-word-col" key={columnIndex}>
+                {column.map((word, wordIndex) => {
+                  const index = columnIndex * 6 + wordIndex;
+                  const position = index + 1;
+                  return (
+                    <label
+                      className={
+                        index === restoreFocusIndex
+                          ? 'restore-word-row is-active'
+                          : 'restore-word-row'
                       }
-                    />
-                  </label>
-                );
-              })}
-            </div>
-          ))}
+                      key={position}
+                    >
+                      <span className="word-num">{position}</span>
+                      <input
+                        aria-label={`Recovery word ${position}`}
+                        autoCapitalize="none"
+                        autoComplete="off"
+                        autoCorrect="off"
+                        className="restore-word-input"
+                        disabled={busy}
+                        inputMode="text"
+                        spellCheck={false}
+                        type="text"
+                        value={word}
+                        onChange={(event) => updateRestoreWord(index, event)}
+                        onFocus={() => setRestoreFocusIndex(index)}
+                        onPaste={(event) =>
+                          pasteRestoreWordsFromField(index, event)
+                        }
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
         </div>
-        <div className="onb-footer onb-restore-footer">
+        <div className="screen-actions onb-restore-footer">
           <ScreenError message={error} />
           <button
             className="btn-ghost onb-paste-action"
@@ -288,7 +298,7 @@ export function IdentitySetupScreen({
             Paste from clipboard
           </button>
           <button
-            className="cta-pill onb-restore-submit"
+            className="flow-primary-action onb-restore-submit"
             type="button"
             disabled={busy || !canRestore}
             onClick={() => void onRestore(restorePhrase)}
@@ -301,29 +311,34 @@ export function IdentitySetupScreen({
   }
 
   return (
-    <section className="onb-welcome" aria-labelledby="identity-title">
-      <div className="onb-welcome-hero">
-        <div className="onb-brand-mark" aria-hidden="true">
-          <BitcoinMark />
+    <section
+      className="onb-welcome flow-screen"
+      aria-labelledby="identity-title"
+    >
+      <div className="flow-screen-content">
+        <div className="onb-welcome-hero">
+          <div className="onb-brand-mark" aria-hidden="true">
+            <BitcoinMark />
+          </div>
+          <h1 id="identity-title">Chascuro</h1>
+          <p>
+            Private chat and Bitcoin payments, held by a community you trust.
+          </p>
         </div>
-        <h1 id="identity-title">Chascuro</h1>
-        <p>Private chat and Bitcoin payments, held by a community you trust.</p>
+        <button
+          className="onb-restore-action"
+          type="button"
+          disabled={busy}
+          onClick={() => runViewTransition('forward', () => setMode('restore'))}
+        >
+          <RefreshIcon size={16} />
+          Restore another wallet
+        </button>
       </div>
-      <button
-        className="onb-restore-action"
-        type="button"
-        disabled={busy}
-        onClick={() =>
-          runViewTransition('forward', () => setMode('restore'))
-        }
-      >
-        <RefreshIcon size={16} />
-        Restore another wallet
-      </button>
-      <div className="onb-welcome-footer">
+      <div className="screen-actions">
         <ScreenError message={error} />
         <button
-          className="cta-pill"
+          className="flow-primary-action"
           type="button"
           disabled={busy}
           onClick={() => void createWalletIdentity()}

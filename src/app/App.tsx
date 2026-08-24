@@ -385,8 +385,24 @@ export function WalletApp(dependencies: WalletAppProps) {
           snapshot={state.walletSnapshot}
           refreshing={state.busy === 'refresh'}
           error={state.error}
+          candidate={state.candidate}
+          previewBusy={state.busy === 'preview'}
+          joinBusy={state.busy === 'join'}
           onRefresh={() => controller.refreshBalance()}
           onLock={() => controller.lock()}
+          onPreviewFederation={(inviteCode) =>
+            controller.previewFederation(inviteCode)
+          }
+          onJoinFederation={(trustAcknowledged, mainnetRiskAcknowledged) =>
+            controller.joinFederation(
+              trustAcknowledged,
+              mainnetRiskAcknowledged,
+            )
+          }
+          onSelectFederation={(federationId) =>
+            controller.selectFederation(federationId)
+          }
+          onCancelAddMint={() => controller.returnToInvite()}
           onParseEcash={(rawNotes) => controller.parseEcash(rawNotes)}
           onRedeemEcash={(preview) => controller.redeemEcash(preview)}
           onCreateEcashSpend={(amountSats) =>

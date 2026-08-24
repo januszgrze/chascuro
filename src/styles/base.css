@@ -43,6 +43,8 @@
 
   /* The app frame owns device safe areas; views add only this content gutter. */
   --app-bottom-gutter: 12px;
+  --flow-action-inline: 24px;
+  --flow-action-bottom: var(--app-bottom-gutter);
 
   color: var(--color-ink);
   background: var(--color-canvas);
@@ -144,6 +146,19 @@ textarea {
   overflow: hidden;
   padding: env(safe-area-inset-top) env(safe-area-inset-right)
     env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/*
+ * Standalone WebKit can report a dynamic viewport shorter than 100vh. Keep
+ * the entire root chain at the full PWA height so it does not clip the frame.
+ */
+@media (display-mode: standalone) {
+  html,
+  body,
+  #root,
+  .app-frame {
+    height: 100vh;
+  }
 }
 
 .app-frame--dark {
@@ -264,6 +279,58 @@ textarea {
   display: flex;
   flex-direction: column;
   animation: screen-in 216ms ease-out both;
+}
+
+/*
+ * Flow screens always reserve the final row for their primary action. Keeping
+ * the action outside the content row makes its position independent of each
+ * screen's content and scroll behavior.
+ */
+.screen > section.flow-screen {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.flow-screen-content {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Shared geometry for the wallet's white, bottom-oriented flow action. */
+.screen-actions {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  width: 100%;
+  padding: 8px var(--flow-action-inline) var(--flow-action-bottom);
+}
+
+.screen-actions > .error-message {
+  margin: 0;
+  text-align: center;
+}
+
+.flow-primary-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: 68px;
+  min-height: 68px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  font-size: var(--text-body);
+  font-weight: var(--font-weight-bold);
+  line-height: 18px;
 }
 
 .screen

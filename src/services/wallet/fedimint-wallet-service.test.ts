@@ -162,12 +162,24 @@ function attachSdkWallet(
 
   Object.assign(service as unknown as Record<string, unknown>, {
     wallet,
+    clients: new Map([
+      [
+        activeFederation.federationId,
+        {
+          federation: activeFederation,
+          wallet,
+          balanceMsats: msats(0n),
+        },
+      ],
+    ]),
+    selectedId: activeFederation.federationId,
     generation: 1,
     snapshot: Object.freeze({
       ...service.getSnapshot(),
       lifecycle: 'ready',
       connection: 'online',
       activeFederation,
+      federations: [{ federation: activeFederation, balanceMsats: msats(0n) }],
     }),
   });
 
@@ -185,6 +197,79 @@ function attachSdkWallet(
     lightningReceiveStreams,
   };
 }
+
+describe('Fedimint pending join reconciliation', () => {
+  it('opens the reserved second client even when another mint is active', async () => {
+    const service = new FedimintWalletService();
+    const pendingClientName = clientName(
+      '74cae626-5656-4679-848c-aa8bfe623b57',
+    );
+    const existingWallet = {} as FedimintWallet;
+    const pendingWallet = {
+      open: vi.fn().mockResolvedValue(true),
+      federation: {
+        getFederationId: vi.fn().mockResolvedValue('fed-b'),
+      },
+      balance: {
+        getBalance: vi.fn().mockResolvedValue(25_000),
+        subscribeBalance: vi.fn().mockReturnValue(vi.fn()),
+      },
+    } as unknown as FedimintWallet;
+    const createNamedWallet = vi.fn().mockReturnValue(pendingWallet);
+
+    Object.assign(service as unknown as Record<string, unknown>, {
+      director: { createNamedWallet },
+      generation: 1,
+      clients: new Map([
+        [
+          activeFederation.federationId,
+          {
+            federation: activeFederation,
+            wallet: existingWallet,
+            balanceMsats: msats(50_000n),
+          },
+        ],
+      ]),
+      selectedId: activeFederation.federationId,
+      wallet: existingWallet,
+      snapshot: Object.freeze({
+        ...service.getSnapshot(),
+        lifecycle: 'ready',
+        connection: 'online',
+        activeFederation,
+        federations: [
+          { federation: activeFederation, balanceMsats: msats(50_000n) },
+        ],
+        balanceMsats: msats(50_000n),
+      }),
+    });
+
+    await expect(
+      service.federation.reconcilePendingJoin(
+        {
+          federationId: federationId('fed-b'),
+          displayName: 'Federation B',
+          network: 'signet',
+          modules: ['ln', 'mint'],
+          guardianCount: 3,
+        },
+        pendingClientName,
+      ),
+    ).resolves.toMatchObject({
+      federationId: 'fed-b',
+      clientName: pendingClientName,
+    });
+    expect(createNamedWallet).toHaveBeenCalledWith(pendingClientName);
+    expect(pendingWallet.open).toHaveBeenCalledWith(pendingClientName);
+    expect(service.getSnapshot()).toMatchObject({
+      activeFederation: { federationId: 'fed-b' },
+      federations: [
+        { federation: { federationId: 'fed-a' } },
+        { federation: { federationId: 'fed-b' } },
+      ],
+    });
+  });
+});
 
 describe('sanitizeFederationPreview', () => {
   it('extracts only display-safe federation metadata', () => {
@@ -478,15 +563,33 @@ describe('Fedimint Lightning payment boundary', () => {
         memo: 'Mainnet payment',
       }),
     };
+    const lightningFederation = {
+      ...activeFederation,
+      network: 'unknown' as const,
+    };
     Object.assign(service as unknown as Record<string, unknown>, {
       wallet,
       director,
+      clients: new Map([
+        [
+          lightningFederation.federationId,
+          {
+            federation: lightningFederation,
+            wallet,
+            balanceMsats: msats(0n),
+          },
+        ],
+      ]),
+      selectedId: lightningFederation.federationId,
       generation: 1,
       snapshot: Object.freeze({
         ...service.getSnapshot(),
         lifecycle: 'ready',
         connection: 'online',
-        activeFederation: { ...activeFederation, network: 'unknown' },
+        activeFederation: lightningFederation,
+        federations: [
+          { federation: lightningFederation, balanceMsats: msats(0n) },
+        ],
       }),
     });
 

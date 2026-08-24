@@ -6,6 +6,7 @@ This file defines working guidelines for AI coding agents in this repository.
 
 - Name: Chascuro
 - Purpose: Experimental, mobile-first Fedimint wallet PWA with Marmot chat integration. Do not use it with real funds.
+- Multi-mint: one seed, many joined federations, one selected mint for Lightning. Ecash redeem auto-routes to the matching joined mint. Leave/remove is not implemented.
 - Stack: React + TypeScript + Vite + Vitest + Playwright
 - Package manager: npm (use the committed `package-lock.json`)
 - App source: `src/`

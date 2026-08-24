@@ -1,0 +1,7 @@
+{
+  "plugins": {
+    "paper-desktop": {
+      "enabled": true
+    }
+  }
+}

@@ -116,18 +116,6 @@
   line-height: 16px;
 }
 
-.onb-welcome-footer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  margin: 8px 20px 32px;
-}
-
-.onb-welcome-footer.is-install {
-  margin-top: auto;
-  margin-bottom: 32px;
-}
-
 .onb-software-disclaimer {
   width: 100%;
   max-width: 310px;
@@ -170,12 +158,6 @@
   font-weight: var(--font-weight-bold);
   line-height: 34px;
   text-align: center;
-}
-
-.onb-ready-footer {
-  display: flex;
-  flex-direction: column;
-  margin: 0 20px 32px;
 }
 
 .onb-progress {
@@ -222,14 +204,6 @@
   flex-direction: column;
 }
 
-.onb-footer {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
-  margin: auto 20px 32px;
-}
-
 .cta-pill {
   display: flex;
   align-items: center;
@@ -243,10 +217,6 @@
   font-size: var(--text-body);
   font-weight: var(--font-weight-bold);
   line-height: 18px;
-}
-
-.cta-pill.is-standalone {
-  margin: auto 20px 32px;
 }
 
 .btn-ghost {
@@ -336,7 +306,7 @@
   margin-bottom: 16px;
 }
 
-.onb-recovery .onb-footer .btn-ghost {
+.onb-recovery .screen-actions .btn-ghost {
   padding: 6px;
 }
 

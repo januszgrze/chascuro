@@ -32,11 +32,17 @@ export type WalletLifecycle =
   'closed' | 'opening' | 'ready' | 'joining' | 'error';
 export type WalletConnection = 'offline' | 'online' | 'unknown';
 
+export interface FederationAccount {
+  readonly federation: ActiveFederation;
+  readonly balanceMsats: Msats;
+}
+
 export interface WalletSnapshot {
   readonly serviceKind: WalletServiceKind;
   readonly lifecycle: WalletLifecycle;
   readonly connection: WalletConnection;
   readonly activeFederation?: ActiveFederation;
+  readonly federations: readonly FederationAccount[];
   readonly balanceMsats: Msats;
   readonly operations: readonly WalletOperation[];
   readonly capabilities?: FederationCapabilities;
@@ -45,7 +51,17 @@ export interface WalletSnapshot {
 
 export interface OpenWalletInput {
   activeFederation?: ActiveFederation;
+  federations?: readonly ActiveFederation[];
   signal?: AbortSignal;
+}
+
+export function resolveOpenFederations(
+  input: OpenWalletInput,
+): readonly ActiveFederation[] {
+  if (input.federations !== undefined && input.federations.length > 0) {
+    return input.federations;
+  }
+  return input.activeFederation === undefined ? [] : [input.activeFederation];
 }
 
 export type WalletSnapshotListener = (snapshot: WalletSnapshot) => void;
@@ -63,20 +79,25 @@ export interface WalletFederationService {
     inviteCode: SensitiveInput,
     signal?: AbortSignal,
   ): Promise<FederationCandidate>;
+  /** Reserves the SDK client identity that must be persisted before joining. */
+  createJoinClientName(): ActiveFederation['clientName'];
   join(
     approval: FederationJoinApproval,
+    clientName: ActiveFederation['clientName'],
     signal?: AbortSignal,
   ): Promise<ActiveFederation>;
   /**
-   * Reopens the SDK's fixed client after a submitted join was interrupted
-   * before the app profile could durably record success. Returns undefined when
-   * no joined client exists for the pending descriptor.
+   * Reopens the reserved SDK client after a submitted join was interrupted
+   * before the app profile could durably record success. A missing name is
+   * accepted only for legacy first-client reconciliation.
    */
   reconcilePendingJoin(
     pending: FederationDescriptor,
+    clientName: ActiveFederation['clientName'] | undefined,
     signal?: AbortSignal,
   ): Promise<ActiveFederation | undefined>;
   getCapabilities(signal?: AbortSignal): Promise<FederationCapabilities>;
+  select(federationId: ActiveFederation['federationId']): Promise<void>;
 }
 
 export interface WalletBalanceService {

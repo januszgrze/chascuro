@@ -12,6 +12,11 @@ export interface PendingFederationJoinRecord {
   readonly network: PersistedBitcoinNetwork;
   readonly modules: readonly string[];
   readonly guardianCount: number;
+  /**
+   * SDK client identity reserved before submitting the join. Older first-mint
+   * markers may omit it and reconcile against the legacy default client.
+   */
+  readonly clientName?: string;
   readonly submittedAtMs: number;
 }
 
@@ -27,15 +32,19 @@ export function parsePendingFederationJoinRecord(
 ): PendingFederationJoinRecord {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, [
-      'version',
-      'federationId',
-      'displayName',
-      'network',
-      'modules',
-      'guardianCount',
-      'submittedAtMs',
-    ]) ||
+    !hasAllowedExactKeys(
+      value,
+      [
+        'version',
+        'federationId',
+        'displayName',
+        'network',
+        'modules',
+        'guardianCount',
+        'submittedAtMs',
+      ],
+      ['clientName'],
+    ) ||
     value.version !== PENDING_FEDERATION_JOIN_RECORD_VERSION ||
     !isIdentifier(value.federationId) ||
     !isIdentifier(value.displayName) ||
@@ -44,6 +53,7 @@ export function parsePendingFederationJoinRecord(
     !value.modules.every(isIdentifier) ||
     new Set(value.modules).size !== value.modules.length ||
     !isNonNegativeSafeInteger(value.guardianCount) ||
+    (value.clientName !== undefined && !isIdentifier(value.clientName)) ||
     !isNonNegativeSafeInteger(value.submittedAtMs)
   ) {
     throw new TypeError('Stored pending federation join is invalid.');
@@ -56,18 +66,21 @@ export function parsePendingFederationJoinRecord(
     network: value.network,
     modules: Object.freeze([...value.modules]),
     guardianCount: value.guardianCount,
+    ...(value.clientName === undefined ? {} : { clientName: value.clientName }),
     submittedAtMs: value.submittedAtMs,
   });
 }
 
-function hasExactKeys(
+function hasAllowedExactKeys(
   value: Record<string, unknown>,
-  expected: readonly string[],
+  required: readonly string[],
+  optional: readonly string[],
 ): boolean {
+  const allowed = new Set([...required, ...optional]);
   const keys = Object.keys(value);
   return (
-    keys.length === expected.length &&
-    expected.every((key) => Object.hasOwn(value, key))
+    required.every((key) => Object.hasOwn(value, key)) &&
+    keys.every((key) => allowed.has(key))
   );
 }
 
