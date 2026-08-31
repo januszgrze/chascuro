@@ -84,8 +84,8 @@ export default defineConfig(({ mode }) => {
           start_url: base,
           scope: base,
           display: 'standalone',
-          background_color: '#121316',
-          theme_color: '#121316',
+          background_color: '#050403',
+          theme_color: '#050403',
           orientation: 'portrait-primary',
           icons: [
             {
@@ -120,8 +120,12 @@ export default defineConfig(({ mode }) => {
           runtimeCaching: [],
           sourcemap: false,
         },
+        // Serve the manifest and a development-only service worker so `npm run dev`
+        // can be installed like production. Standalone chrome still requires
+        // Add to Home Screen (or DevTools display-mode emulation).
         devOptions: {
-          enabled: false,
+          enabled: true,
+          suppressWarnings: true,
         },
       }),
     ],

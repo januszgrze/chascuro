@@ -47,10 +47,7 @@ test('completes the explicit simulated onboarding flow on mobile', async ({
   });
 
   await page.getByRole('button', { name: 'Backup and settings' }).click();
-  await page
-    .locator('summary')
-    .filter({ hasText: /^Seed & PIN$/ })
-    .click();
+  await page.getByRole('button', { name: /Seed & PIN/ }).click();
   await page.getByRole('button', { name: 'Reveal recovery words' }).click();
   await expect(page.locator('.settings-word-grid .word-row')).toHaveCount(12);
   await expect(
@@ -65,10 +62,7 @@ test('completes the explicit simulated onboarding flow on mobile', async ({
     fullPage: true,
   });
 
-  await page
-    .locator('summary')
-    .filter({ hasText: /^Wallet$/ })
-    .click();
-  await page.getByRole('button', { name: 'Lock wallet' }).click();
+  await page.getByRole('button', { name: 'Back to settings' }).click();
+  await page.getByRole('button', { name: /Lock wallet/ }).click();
   await expect(page.getByRole('heading', { name: 'Enter PIN' })).toBeVisible();
 });

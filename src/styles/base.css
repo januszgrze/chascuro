@@ -84,7 +84,7 @@
 html {
   min-width: 320px;
   height: 100%;
-  background: #121316;
+  background: #050403;
   overflow: hidden;
   overscroll-behavior: none;
 }
@@ -93,7 +93,7 @@ body {
   min-width: 320px;
   height: 100%;
   margin: 0;
-  background: #121316;
+  background: #050403;
   color: var(--color-ink);
   overflow: hidden;
   overscroll-behavior: none;
@@ -101,7 +101,7 @@ body {
 
 #root {
   height: 100%;
-  background: #121316;
+  background: #050403;
   overflow: hidden;
 }
 
@@ -216,7 +216,7 @@ textarea {
  * ------------------------------------------------------------------------- */
 
 .app-frame:not(:has([class^='chat-'])) {
-  --color-canvas: #121316;
+  --color-canvas: #050403;
   --color-surface: #1c1d22;
   --color-ink: #f3efe4;
   --color-muted: #8b8a97;
@@ -231,7 +231,7 @@ textarea {
   --color-warn-ink: #e6b8a6;
   --color-warn-stroke: #e5674a;
 
-  background-color: #121316;
+  background-color: #050403;
   background-image: none;
 }
 

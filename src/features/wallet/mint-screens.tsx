@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import {
   addMsats,
@@ -104,6 +104,135 @@ export function PayFromCard({
           balanceMsats={account.balanceMsats}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * PayFrom card + bottom sheet for Lightning receive / ecash send review.
+ * Selecting a mint applies immediately.
+ */
+export function MintPickerSheet({
+  snapshot,
+  direction = 'send',
+  open,
+  onOpenChange,
+  onSelect,
+  onConnectMint,
+}: {
+  snapshot: WalletSnapshot;
+  direction?: 'send' | 'receive';
+  open: boolean;
+  onOpenChange(open: boolean): void;
+  onSelect(federationId: string): void | Promise<void>;
+  onConnectMint?(): void;
+}) {
+  const selected = selectedMintAccount(snapshot);
+  const selectedId = selected?.federation.federationId;
+  const title = direction === 'receive' ? 'Receive to' : 'Pay from';
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        onOpenChange(false);
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, onOpenChange]);
+
+  async function pick(federationId: string) {
+    if (federationId !== selectedId) {
+      await onSelect(federationId);
+    }
+    onOpenChange(false);
+  }
+
+  return (
+    <div className="mint-picker">
+      <PayFromCard
+        account={selected}
+        direction={direction}
+        onPick={() => onOpenChange(true)}
+      />
+      {open ? (
+        <div className="mint-sheet-layer">
+          <button
+            className="mint-sheet-backdrop"
+            type="button"
+            aria-label="Dismiss mint picker"
+            onClick={() => onOpenChange(false)}
+          />
+          <div
+            className="mint-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mint-sheet-title"
+          >
+            <div className="mint-sheet-handle" aria-hidden="true" />
+            <h2 id="mint-sheet-title" className="mint-sheet-title">
+              {title}
+            </h2>
+            <ul className="mint-sheet-list">
+              {snapshot.federations.map((account) => {
+                const federationId = account.federation.federationId;
+                const selectedMint = federationId === selectedId;
+                const subtitleLabel = mintNetworkLabel(
+                  account.federation.network,
+                );
+                return (
+                  <li key={federationId}>
+                    <button
+                      className={`choose-mint-row${selectedMint ? ' is-selected' : ''}`}
+                      type="button"
+                      aria-pressed={selectedMint}
+                      onClick={() => void pick(federationId)}
+                    >
+                      <span className="choose-mint-copy">
+                        <span className="choose-mint-name">
+                          {account.federation.displayName}
+                        </span>
+                        {subtitleLabel !== undefined && (
+                          <span className="choose-mint-sub">
+                            {subtitleLabel}
+                          </span>
+                        )}
+                      </span>
+                      <span className="choose-mint-trailing">
+                        <span className="choose-mint-balance">
+                          <BtcAmount amount={account.balanceMsats} />
+                        </span>
+                        <span
+                          className={`mint-check${selectedMint ? ' is-checked' : ''}`}
+                          aria-hidden="true"
+                        >
+                          {selectedMint ? <CheckIcon size={14} /> : null}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            {onConnectMint !== undefined ? (
+              <button
+                className="choose-mint-connect"
+                type="button"
+                onClick={() => {
+                  onOpenChange(false);
+                  onConnectMint();
+                }}
+              >
+                <PlusIcon size={16} />
+                Connect a mint
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

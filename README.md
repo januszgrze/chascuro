@@ -18,6 +18,12 @@ npm run dev
 Open the local URL printed by Vite. For a deterministic simulated wallet, run
 `npm run dev:fake` instead.
 
+The dev server registers the PWA manifest and a development service worker, so you
+can Add to Home Screen the same way as a production build. The app only
+enters `display: standalone` (full-screen, nav hugging the bottom) after that
+install, or if you emulate `display-mode: standalone` in DevTools. Service
+workers need a secure context: `localhost` or HTTPS.
+
 The wallet can join more than one Fedimint mint on the same seed. Home shows a
 combined total. Lightning send, Lightning receive, and ecash send pick a mint
 on the confirm screen (Pay invoice, Create invoice, or Create link). Amount

@@ -232,36 +232,51 @@ export function CopyButton({
   );
 }
 
-export function SettingsRow({
+export function SettingsNavRow({
   icon,
   label,
-  open,
-  onToggle,
-  children,
+  hint,
+  onClick,
+  trailing = 'chevron',
 }: {
   icon: ReactNode;
   label: string;
-  open: boolean;
-  onToggle(): void;
-  children: ReactNode;
+  hint?: string;
+  onClick(): void;
+  trailing?: 'chevron' | 'none';
 }) {
+  const hintId =
+    hint !== undefined && hint !== ''
+      ? `settings-hint-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+      : undefined;
+
   return (
-    <details className="settings-row" open={open}>
-      <summary
-        className="settings-summary"
-        onClick={(event) => {
-          event.preventDefault();
-          onToggle();
-        }}
-      >
-        <span className="settings-row-icon">{icon}</span>
-        <span className="settings-row-label">{label}</span>
-        <span className="settings-chevron">
-          <ChevronDownGlyph />
+    <button
+      className="settings-nav-row"
+      type="button"
+      aria-label={label}
+      aria-describedby={hintId}
+      onClick={onClick}
+    >
+      <span className="settings-row-icon" aria-hidden="true">
+        {icon}
+      </span>
+      <span className="settings-nav-copy">
+        <span className="settings-row-label" aria-hidden="true">
+          {label}
         </span>
-      </summary>
-      <div className="settings-panel">{children}</div>
-    </details>
+        {hintId !== undefined ? (
+          <span id={hintId} className="settings-nav-hint">
+            {hint}
+          </span>
+        ) : null}
+      </span>
+      {trailing === 'chevron' ? (
+        <span className="settings-chevron" aria-hidden="true">
+          <ChevronRightGlyph />
+        </span>
+      ) : null}
+    </button>
   );
 }
 
@@ -285,21 +300,6 @@ export function ChevronRightGlyph() {
     <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
       <path
         d="M9 6l6 6-6 6"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={2.2}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function ChevronDownGlyph() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M6 9l6 6 6-6"
         fill="none"
         stroke="currentColor"
         strokeWidth={2.2}

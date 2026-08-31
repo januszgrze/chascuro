@@ -326,7 +326,7 @@ test('one product profile keeps two MDK conversations isolated across reload and
     await openChatList(alice);
     await alice.getByRole('button', { name: 'Back to wallet' }).click();
     await alice.getByRole('button', { name: 'Backup and settings' }).click();
-    await alice.getByText('Wallet Recovery', { exact: true }).click();
+    await alice.getByText('Erase Wallet', { exact: true }).click();
     await alice.getByLabel('Type ERASE').fill('ERASE');
     await alice.getByRole('button', { name: 'Erase wallet data' }).click();
     await expect(

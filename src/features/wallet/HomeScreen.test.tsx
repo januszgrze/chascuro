@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ComponentProps } from 'react';
@@ -677,8 +678,11 @@ describe('HomeScreen Lightning receive', () => {
     expect(onCreateLightningInvoice).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', { name: /Receive to/ }));
-    expect(screen.getByRole('heading', { name: 'Choose a mint' })).toBeVisible();
-    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    const mintSheet = screen.getByRole('dialog', { name: 'Receive to' });
+    expect(mintSheet).toBeVisible();
+    await user.click(
+      within(mintSheet).getByRole('button', { name: /Test mint/ }),
+    );
 
     expect(
       screen.getByRole('button', { name: 'Create invoice' }),
@@ -846,7 +850,7 @@ describe('HomeScreen activity', () => {
 });
 
 describe('HomeScreen settings and secret-storage warnings', () => {
-  it('shows recovery words in the onboarding layout and clears them on section close', async () => {
+  it('shows recovery words on the seed page and clears them when leaving', async () => {
     const user = userEvent.setup();
     const mnemonic = secretMnemonic([
       'gravity',
@@ -878,27 +882,29 @@ describe('HomeScreen settings and secret-storage warnings', () => {
     expect(
       screen.queryByText('Advanced', { selector: '.settings-row-label' }),
     ).not.toBeInTheDocument();
-    await user.click(screen.getByText('Seed & PIN'));
+    await user.click(screen.getByRole('button', { name: /Seed & PIN/ }));
+    expect(
+      screen.getByText(/Anyone with them can take your money/),
+    ).toBeVisible();
+    expect(screen.getByText('Tap to reveal')).toBeVisible();
     await user.click(
       screen.getByRole('button', { name: 'Reveal recovery words' }),
     );
 
     expect(screen.getByText('gravity')).toBeVisible();
     expect(screen.getByText('tornado')).toBeVisible();
-    expect(
-      screen.getByText(/Anyone with them can take your money/),
-    ).toBeVisible();
+    expect(screen.queryByText('Tap to reveal')).not.toBeInTheDocument();
 
     await user.click(
-      screen.getByText('Wallet', { selector: '.settings-row-label' }),
+      screen.getByRole('button', { name: 'Back to settings' }),
     );
 
     expect(screen.queryByText('gravity')).not.toBeInTheDocument();
     expect(() => mnemonic.reveal()).toThrow();
-    expect(screen.getByText(/Your mints/)).toBeVisible();
+    expect(screen.getByRole('button', { name: /Mints/ })).toBeVisible();
   });
 
-  it('clears a recovery phrase that arrives after the seed section closes', async () => {
+  it('clears a recovery phrase that arrives after leaving the seed page', async () => {
     const user = userEvent.setup();
     const mnemonic = secretMnemonic(
       Array.from({ length: 12 }, () => 'abandon'),
@@ -916,18 +922,32 @@ describe('HomeScreen settings and secret-storage warnings', () => {
     await user.click(
       screen.getByRole('button', { name: 'Backup and settings' }),
     );
-    await user.click(screen.getByText('Seed & PIN'));
+    await user.click(screen.getByRole('button', { name: /Seed & PIN/ }));
     await user.click(
       screen.getByRole('button', { name: 'Reveal recovery words' }),
     );
     await user.click(
-      screen.getByText('Wallet', { selector: '.settings-row-label' }),
+      screen.getByRole('button', { name: 'Back to settings' }),
     );
 
     await act(async () => finishReveal?.({ ok: true, value: mnemonic }));
 
     await waitFor(() => expect(() => mnemonic.reveal()).toThrow());
     expect(screen.queryByText('abandon')).not.toBeInTheDocument();
+  });
+
+  it('opens the mint manager from the settings card', async () => {
+    const user = userEvent.setup();
+    renderHome();
+
+    await user.click(
+      screen.getByRole('button', { name: 'Backup and settings' }),
+    );
+    await user.click(screen.getByRole('button', { name: /Mints/ }));
+
+    expect(
+      screen.getByRole('heading', { name: 'Your mints' }),
+    ).toBeInTheDocument();
   });
 
   it('warns when bearer ecash exists only in memory', async () => {

@@ -463,7 +463,7 @@ describe('WalletApp federation flow', () => {
     await harness.user.click(
       screen.getByRole('button', { name: 'Backup and settings' }),
     );
-    await harness.user.click(screen.getByText('Wallet Recovery'));
+    await harness.user.click(screen.getByText('Erase Wallet'));
 
     const eraseButton = screen.getByRole('button', {
       name: 'Erase wallet data',

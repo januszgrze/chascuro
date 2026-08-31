@@ -38,7 +38,7 @@ import {
   GearIcon,
   HistoryIcon,
   PasteIcon,
-  WarningTriangleIcon,
+  ShieldIcon,
 } from '../shared/icons';
 import { QrCode } from '../shared/QrCode';
 import { QrScanner } from '../shared/QrScanner';
@@ -51,6 +51,7 @@ import {
 import {
   ChooseMintScreen,
   mintDisplayName,
+  MintPickerSheet,
   PayFromCard,
   selectedMintAccount,
   totalJoinedBalance,
@@ -67,7 +68,7 @@ import {
   RecoveryGlyph,
   ResultScreen,
   SeedGlyph,
-  SettingsRow,
+  SettingsNavRow,
   ShareButton,
   WalletDock,
   WalletGlyph,
@@ -197,6 +198,8 @@ type HomeView =
   | 'lightning-send'
   | 'activity'
   | 'settings'
+  | 'settings-seed'
+  | 'settings-recovery'
   | 'add-mint'
   | 'add-mint-review'
   | 'manage-mints';
@@ -210,6 +213,8 @@ const HOME_VIEW_DEPTH: Record<HomeView, number> = {
   activity: 1,
   settings: 1,
   'manage-mints': 2,
+  'settings-seed': 2,
+  'settings-recovery': 2,
   'add-mint': 2,
   'add-mint-review': 3,
 };
@@ -362,11 +367,24 @@ export function HomeScreen(props: HomeScreenProps) {
         <SettingsScreen
           snapshot={props.snapshot}
           onBack={goHome}
-          onRevealMnemonic={props.onRevealMnemonic}
-          onErase={props.onErase}
           onLock={props.onLock}
-          onOpenChat={props.onOpenChat}
-          onManageMints={() => transitionTo('manage-mints')}
+          onOpenMints={() => transitionTo('manage-mints')}
+          onOpenSeed={() => transitionTo('settings-seed')}
+          onOpenRecovery={() => transitionTo('settings-recovery')}
+        />
+      );
+    case 'settings-seed':
+      return (
+        <SeedSettingsScreen
+          onBack={() => transitionTo('settings')}
+          onRevealMnemonic={props.onRevealMnemonic}
+        />
+      );
+    case 'settings-recovery':
+      return (
+        <RecoverySettingsScreen
+          onBack={() => transitionTo('settings')}
+          onErase={props.onErase}
         />
       );
     case 'manage-mints':
@@ -903,29 +921,6 @@ function EcashSendScreen({
     );
   }
 
-  if (pickingMint) {
-    let amountMsats;
-    try {
-      amountMsats = parsePositiveSats(amount);
-    } catch {
-      amountMsats = undefined;
-    }
-    return (
-      <ChooseMintScreen
-        snapshot={snapshot}
-        intent="ecash-send"
-        amountMsats={amountMsats}
-        selectedId={snapshot.activeFederation?.federationId}
-        onConfirm={async (federationId) => {
-          await onSelectFederation?.(federationId);
-          setPickingMint(false);
-        }}
-        onClose={() => setPickingMint(false)}
-        onConnectMint={() => onConnectMint?.()}
-      />
-    );
-  }
-
   if (confirming) {
     return (
       <ResultScreen
@@ -959,9 +954,15 @@ function EcashSendScreen({
           </button>
         }
       >
-        <PayFromCard
-          account={selectedMintAccount(snapshot)}
-          onPick={() => setPickingMint(true)}
+        <MintPickerSheet
+          snapshot={snapshot}
+          direction="send"
+          open={pickingMint}
+          onOpenChange={setPickingMint}
+          onSelect={async (federationId) => {
+            await onSelectFederation?.(federationId);
+          }}
+          onConnectMint={() => onConnectMint?.()}
         />
       </ResultScreen>
     );
@@ -1077,29 +1078,6 @@ function LightningReceiveScreen({
       setReceive(undefined);
       setCopyStatus(undefined);
     });
-  }
-
-  if (pickingMint) {
-    let amountMsats;
-    try {
-      amountMsats = parsePositiveSats(amount);
-    } catch {
-      amountMsats = undefined;
-    }
-    return (
-      <ChooseMintScreen
-        snapshot={snapshot}
-        intent="lightning-receive"
-        amountMsats={amountMsats}
-        selectedId={snapshot.activeFederation?.federationId}
-        onConfirm={async (federationId) => {
-          await onSelectFederation?.(federationId);
-          setPickingMint(false);
-        }}
-        onClose={() => setPickingMint(false)}
-        onConnectMint={() => onConnectMint?.()}
-      />
-    );
   }
 
   if (!enabled) {
@@ -1264,10 +1242,15 @@ function LightningReceiveScreen({
           </button>
         }
       >
-        <PayFromCard
-          account={selectedMintAccount(snapshot)}
+        <MintPickerSheet
+          snapshot={snapshot}
           direction="receive"
-          onPick={() => setPickingMint(true)}
+          open={pickingMint}
+          onOpenChange={setPickingMint}
+          onSelect={async (federationId) => {
+            await onSelectFederation?.(federationId);
+          }}
+          onConnectMint={() => onConnectMint?.()}
         />
       </ResultScreen>
     );
@@ -2153,33 +2136,143 @@ function TransactionDetailScreen({
   );
 }
 
+const SEED_PLACEHOLDER_COLUMNS = [
+  Array.from({ length: 6 }, () => 'secret'),
+  Array.from({ length: 6 }, () => 'secret'),
+] as const;
+
 function SettingsScreen({
   snapshot,
   onBack,
-  onRevealMnemonic,
-  onErase,
   onLock,
-  onOpenChat,
-  onManageMints,
+  onOpenMints,
+  onOpenSeed,
+  onOpenRecovery,
 }: {
   snapshot: WalletSnapshot;
   onBack(): void;
-  onRevealMnemonic(): Promise<FeatureResult<SecretMnemonic>>;
-  onErase(typedConfirmation: string): Promise<FeatureResult<void>>;
   onLock(): Promise<void>;
-  onOpenChat?: () => void;
-  onManageMints(): void;
+  onOpenMints(): void;
+  onOpenSeed(): void;
+  onOpenRecovery(): void;
 }) {
-  type SettingsSection = 'wallet' | 'seed' | 'recovery';
+  return (
+    <section
+      className="page-shell settings-shell"
+      aria-labelledby="settings-title"
+    >
+      <div className="page-topbar">
+        <button
+          className="page-close"
+          type="button"
+          aria-label="Back to wallet"
+          onClick={onBack}
+        >
+          <CloseGlyph />
+        </button>
+      </div>
+      <div className="settings-intro">
+        <h1 id="settings-title" className="page-title">
+          Settings
+        </h1>
+      </div>
+      <div className="settings-list">
+        <div className="settings-group">
+          <SettingsNavRow
+            icon={<WalletGlyph />}
+            label="Mints"
+            hint={
+              snapshot.activeFederation !== undefined
+                ? snapshot.activeFederation.displayName
+                : 'No mint selected'
+            }
+            onClick={onOpenMints}
+          />
+          <SettingsNavRow
+            icon={<SeedGlyph />}
+            label="Seed & PIN"
+            hint="Reveal recovery words"
+            onClick={onOpenSeed}
+          />
+          <SettingsNavRow
+            icon={<RecoveryGlyph />}
+            label="Erase Wallet"
+            hint="Remove this device's data"
+            onClick={onOpenRecovery}
+          />
+          <SettingsNavRow
+            icon={<ShieldIcon size={22} />}
+            label="Lock wallet"
+            hint="Require PIN to unlock"
+            trailing="none"
+            onClick={() => {
+              void onLock();
+            }}
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
 
+function SeedWordColumns({
+  columns,
+  blurred,
+}: {
+  columns: readonly (readonly string[])[];
+  blurred?: boolean;
+}) {
+  return (
+    <div
+      className={`word-grid settings-word-grid${blurred === true ? ' is-blurred' : ''}`}
+      aria-hidden={blurred === true ? true : undefined}
+    >
+      {columns.map((column, columnIndex) => (
+        <ol
+          className="word-col"
+          key={columnIndex}
+          start={columnIndex * 6 + 1}
+          aria-label={
+            blurred === true
+              ? undefined
+              : `Recovery words ${columnIndex * 6 + 1} to ${columnIndex * 6 + column.length}`
+          }
+        >
+          {column.map((word, wordIndex) => {
+            const position = columnIndex * 6 + wordIndex + 1;
+            return (
+              <li className="word-row" key={`${position}-${word}`}>
+                <span className="word-num">{position}</span>
+                <span className="word-text">{word}</span>
+              </li>
+            );
+          })}
+        </ol>
+      ))}
+    </div>
+  );
+}
+
+function SeedSettingsScreen({
+  onBack,
+  onRevealMnemonic,
+}: {
+  onBack(): void;
+  onRevealMnemonic(): Promise<FeatureResult<SecretMnemonic>>;
+}) {
   const [mnemonic, setMnemonic] = useState<SecretMnemonic>();
-  const [openSection, setOpenSection] = useState<SettingsSection>();
-  const openSectionRef = useRef<SettingsSection | undefined>(undefined);
+  const aliveRef = useRef(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const [eraseConfirmation, setEraseConfirmation] = useState('');
   const words = mnemonic?.reveal() ?? [];
   const wordColumns = [words.slice(0, 6), words.slice(6)];
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
 
   useEffect(
     () => () => {
@@ -2187,10 +2280,6 @@ function SettingsScreen({
     },
     [mnemonic],
   );
-
-  useEffect(() => {
-    openSectionRef.current = openSection;
-  }, [openSection]);
 
   async function reveal() {
     setBusy(true);
@@ -2201,12 +2290,82 @@ function SettingsScreen({
       setError(result.error);
       return;
     }
-    if (openSectionRef.current !== 'seed') {
+    if (!aliveRef.current) {
       result.value.clear();
       return;
     }
     setMnemonic(result.value);
   }
+
+  return (
+    <section
+      className="page-shell settings-shell"
+      aria-labelledby="settings-seed-title"
+    >
+      <div className="page-topbar">
+        <button
+          className="page-close"
+          type="button"
+          aria-label="Back to settings"
+          onClick={onBack}
+        >
+          <CloseGlyph />
+        </button>
+      </div>
+      <div className="settings-intro">
+        <h1 id="settings-seed-title" className="page-title">
+          Seed & PIN
+        </h1>
+        <p className="settings-subtitle">
+          Write these down in order. Anyone with them can take your money —
+          Chascuro can't recover them.
+        </p>
+      </div>
+      <div className="settings-page-body">
+        {mnemonic === undefined ? (
+          <button
+            className="settings-word-reveal"
+            type="button"
+            disabled={busy}
+            aria-label="Reveal recovery words"
+            onClick={() => void reveal()}
+          >
+            <SeedWordColumns columns={SEED_PLACEHOLDER_COLUMNS} blurred />
+            <span className="settings-word-reveal-label">
+              {busy ? 'Revealing…' : 'Tap to reveal'}
+            </span>
+          </button>
+        ) : (
+          <>
+            <SeedWordColumns columns={wordColumns} />
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => {
+                mnemonic.clear();
+                setMnemonic(undefined);
+              }}
+            >
+              Hide recovery words
+            </button>
+          </>
+        )}
+        <ScreenError message={error} />
+      </div>
+    </section>
+  );
+}
+
+function RecoverySettingsScreen({
+  onBack,
+  onErase,
+}: {
+  onBack(): void;
+  onErase(typedConfirmation: string): Promise<FeatureResult<void>>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const [eraseConfirmation, setEraseConfirmation] = useState('');
 
   async function erase() {
     setBusy(true);
@@ -2218,157 +2377,51 @@ function SettingsScreen({
     }
   }
 
-  function toggleSection(section: SettingsSection) {
-    if (openSection === 'seed') {
-      mnemonic?.clear();
-      setMnemonic(undefined);
-    }
-    setOpenSection((current) => (current === section ? undefined : section));
-  }
-
   return (
     <section
       className="page-shell settings-shell"
-      aria-labelledby="settings-title"
+      aria-labelledby="settings-recovery-title"
     >
       <div className="page-topbar">
-        <ChatTopbarSlot onOpenChat={onOpenChat} />
         <button
           className="page-close"
           type="button"
-          aria-label="Back to wallet"
+          aria-label="Back to settings"
           onClick={onBack}
         >
           <CloseGlyph />
         </button>
       </div>
-      <h1 id="settings-title" className="page-title">
-        Settings
-      </h1>
-      <div className="settings-list">
-        <SettingsRow
-          icon={<WalletGlyph />}
-          label="Wallet"
-          open={openSection === 'wallet'}
-          onToggle={() => toggleSection('wallet')}
-        >
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={onManageMints}
-          >
-            Your mints
-            {snapshot.activeFederation !== undefined
-              ? ` · ${snapshot.activeFederation.displayName}`
-              : ''}
-          </button>
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => {
-              mnemonic?.clear();
-              setMnemonic(undefined);
-              void onLock();
-            }}
-          >
-            Lock wallet
-          </button>
-        </SettingsRow>
-        <SettingsRow
-          icon={<SeedGlyph />}
-          label="Seed & PIN"
-          open={openSection === 'seed'}
-          onToggle={() => toggleSection('seed')}
-        >
-          {mnemonic === undefined ? (
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={busy}
-              onClick={() => void reveal()}
-            >
-              {busy ? 'Revealing…' : 'Reveal recovery words'}
-            </button>
-          ) : (
-            <>
-              <div className="warn-banner settings-seed-warning">
-                <WarningTriangleIcon />
-                <p>
-                  Write these down in order. Anyone with them can take your
-                  money — Chascuro can't recover them.
-                </p>
-              </div>
-              <div className="word-grid settings-word-grid">
-                {wordColumns.map((column, columnIndex) => (
-                  <ol
-                    className="word-col"
-                    key={columnIndex}
-                    start={columnIndex * 6 + 1}
-                    aria-label={`Recovery words ${columnIndex * 6 + 1} to ${columnIndex * 6 + column.length}`}
-                  >
-                    {column.map((word, wordIndex) => {
-                      const position = columnIndex * 6 + wordIndex + 1;
-                      return (
-                        <li className="word-row" key={`${position}-${word}`}>
-                          <span className="word-num">{position}</span>
-                          <span className="word-text">{word}</span>
-                        </li>
-                      );
-                    })}
-                  </ol>
-                ))}
-              </div>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => {
-                  mnemonic.clear();
-                  setMnemonic(undefined);
-                }}
-              >
-                Hide recovery words
-              </button>
-            </>
-          )}
-        </SettingsRow>
-        <SettingsRow
-          icon={<RecoveryGlyph />}
-          label="Wallet Recovery"
-          open={openSection === 'recovery'}
-          onToggle={() => toggleSection('recovery')}
-        >
-          <div className="settings-danger">
-            <div className="settings-danger-warning">
-              <WarningTriangleIcon />
-              <div>
-                <h2>Erase this device</h2>
-                <p>
-                  This removes app records, the verified SDK database file,
-                  caches, and service workers. It cannot revoke ecash already
-                  exported.
-                </p>
-              </div>
-            </div>
-            <label className="settings-field">
-              <span>Type ERASE to confirm</span>
-              <input
-                autoComplete="off"
-                value={eraseConfirmation}
-                onChange={(event) => setEraseConfirmation(event.target.value)}
-              />
-            </label>
-            <button
-              className="settings-danger-action"
-              type="button"
-              disabled={busy || eraseConfirmation !== 'ERASE'}
-              onClick={() => void erase()}
-            >
-              {busy ? 'Erasing…' : 'Erase wallet data'}
-            </button>
-          </div>
-        </SettingsRow>
+      <div className="settings-intro">
+        <h1 id="settings-recovery-title" className="page-title">
+          Erase Wallet
+        </h1>
+        <p className="settings-subtitle">
+          This removes app records, the verified SDK database file, caches, and
+          service workers. It cannot revoke ecash already exported.
+        </p>
       </div>
-      <ScreenError message={error} />
+      <div className="settings-page-body">
+        <div className="settings-danger">
+          <label className="settings-field">
+            <span>Type ERASE to confirm</span>
+            <input
+              autoComplete="off"
+              value={eraseConfirmation}
+              onChange={(event) => setEraseConfirmation(event.target.value)}
+            />
+          </label>
+          <button
+            className="settings-danger-action"
+            type="button"
+            disabled={busy || eraseConfirmation !== 'ERASE'}
+            onClick={() => void erase()}
+          >
+            {busy ? 'Erasing…' : 'Erase wallet data'}
+          </button>
+        </div>
+        <ScreenError message={error} />
+      </div>
     </section>
   );
 }
