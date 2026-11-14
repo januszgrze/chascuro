@@ -79,6 +79,7 @@ interface ParsedSecret {
 
 interface PendingQuote {
   quote: LightningQuote;
+  federationId: ActiveFederation['federationId'];
   invoice: SensitiveInput;
 }
 
@@ -884,6 +885,9 @@ export class FakeWalletService implements WalletService {
     if (intent.preview.network !== activeFederation.network) {
       throw new WalletError('invoice_wrong_network');
     }
+    if (!this.capabilitiesFor(activeFederation).gatewayAvailable) {
+      throw new WalletError('gateway_unavailable');
+    }
     if (!this.lightningFeeQuoteAvailable) {
       throw new WalletError('fee_quote_unavailable');
     }
@@ -906,6 +910,7 @@ export class FakeWalletService implements WalletService {
     });
     this.quotes.set(quote.quoteId, {
       quote,
+      federationId: activeFederation.federationId,
       invoice: rawInvoice.input,
     });
     return quote;
@@ -926,6 +931,7 @@ export class FakeWalletService implements WalletService {
     const pending = this.quotes.get(confirmed.quote.quoteId);
     if (
       pending === undefined ||
+      pending.federationId !== activeFederation.federationId ||
       pending.quote.invoiceFingerprint !== confirmed.quote.invoiceFingerprint ||
       confirmed.quote.expiresAtMs <= this.clock()
     ) {

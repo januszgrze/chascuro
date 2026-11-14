@@ -321,6 +321,21 @@
   padding-top: 32px;
 }
 
+.scan-body--lightning {
+  gap: var(--space-4);
+  padding-block: var(--space-4);
+  overflow-y: auto;
+}
+
+.scan-body--lightning > .scan-frame {
+  flex-shrink: 0;
+  max-width: 100%;
+}
+
+.lightning-send-mint {
+  margin: var(--space-4) 20px;
+}
+
 .scan-frame {
   position: relative;
   display: flex;
@@ -1298,6 +1313,7 @@ p {
   padding: 16px;
   border-radius: var(--radius-md);
   background: var(--color-surface);
+  color: var(--color-ink);
 }
 
 .notice strong {

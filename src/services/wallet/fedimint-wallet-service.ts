@@ -1,4 +1,8 @@
-import { WalletDirector, type GatewayInfo } from '@fedimint/core';
+import {
+  WalletDirector,
+  type GatewayInfo,
+  type LightningGateway,
+} from '@fedimint/core';
 import { FedimintWallet } from '@fedimint/core/testing';
 import { WasmWorkerTransport } from '@fedimint/transport-web';
 
@@ -133,8 +137,16 @@ interface PendingCandidate {
 
 interface PendingLightningQuote {
   readonly quote: LightningQuote;
+  readonly federationId: ActiveFederation['federationId'];
   readonly invoice: SensitiveInput;
   readonly gateway: GatewayInfo;
+}
+
+function hasUsableGatewayId(gateway: LightningGateway): boolean {
+  return (
+    typeof gateway?.info?.gateway_id === 'string' &&
+    gateway.info.gateway_id.length > 0
+  );
 }
 
 interface SdkOperationSubscription {
@@ -491,13 +503,11 @@ export class FedimintWalletService implements WalletService {
       try {
         await wallet.lightning.updateGatewayCache();
         const gateways = await wallet.lightning.listGateways();
-        gatewayAvailable = gateways.some(
-          (gateway) =>
-            typeof gateway?.info?.gateway_id === 'string' &&
-            gateway.info.gateway_id.length > 0,
-        );
+        gatewayAvailable = gateways.some(hasUsableGatewayId);
         feeQuoteAvailable = gateways.some(
-          (gateway) => parseGatewayFeePolicy(gateway?.info?.fees) !== undefined,
+          (gateway) =>
+            hasUsableGatewayId(gateway) &&
+            parseGatewayFeePolicy(gateway.info.fees) !== undefined,
         );
       } catch {
         gatewayAvailable = false;
@@ -796,15 +806,15 @@ export class FedimintWalletService implements WalletService {
     } catch {
       throw new WalletError('gateway_unavailable');
     }
+    const usableGateways = gateways.filter(hasUsableGatewayId);
     const gateway =
-      gateways.find((candidate) => candidate.vetted)?.info ?? gateways[0]?.info;
-    if (
-      gateway === undefined ||
-      typeof gateway.gateway_id !== 'string' ||
-      gateway.gateway_id.length === 0
-    ) {
+      usableGateways.find((candidate) => candidate.vetted)?.info ??
+      usableGateways[0]?.info;
+    if (gateway === undefined) {
       throw new WalletError('gateway_unavailable');
     }
+    signal?.throwIfAborted();
+    this.assertGeneration(generation);
 
     let response: { operation_id: string; invoice: string };
     try {
@@ -859,6 +869,7 @@ export class FedimintWalletService implements WalletService {
   ): Promise<LightningQuote> {
     const wallet = this.requireWallet();
     const federation = this.requireActiveFederation();
+    const generation = this.generation;
     const parsed = this.parsedLightningInvoices.get(intent.preview.fingerprint);
     if (
       parsed === undefined ||
@@ -880,7 +891,13 @@ export class FedimintWalletService implements WalletService {
     } catch {
       throw new WalletError('gateway_unavailable');
     }
-    const candidates = gateways
+    signal?.throwIfAborted();
+    this.assertGeneration(generation);
+    const usableGateways = gateways.filter(hasUsableGatewayId);
+    if (usableGateways.length === 0) {
+      throw new WalletError('gateway_unavailable');
+    }
+    const candidates = usableGateways
       .map((gateway) => {
         const info = gateway?.info;
         const feeMsats = quoteGatewayFee(info, intent.preview.amountMsats!);
@@ -917,6 +934,7 @@ export class FedimintWalletService implements WalletService {
     });
     this.lightningQuotes.set(quote.quoteId, {
       quote,
+      federationId: federation.federationId,
       invoice: parsed.invoice,
       gateway: selected.info,
     });
@@ -938,6 +956,7 @@ export class FedimintWalletService implements WalletService {
     const pending = this.lightningQuotes.get(confirmed.quote.quoteId);
     if (
       pending === undefined ||
+      pending.federationId !== federation.federationId ||
       pending.quote.invoiceFingerprint !== confirmed.quote.invoiceFingerprint ||
       pending.quote.expiresAtMs <= Date.now() ||
       pending.quote.feeMsats > confirmed.quote.maximumFeeMsats

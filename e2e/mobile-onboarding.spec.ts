@@ -46,6 +46,23 @@ test('completes the explicit simulated onboarding flow on mobile', async ({
     fullPage: true,
   });
 
+  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByRole('button', { name: /Pay from Demo Federation/ }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Choose a mint' }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: 'Enter manually' }).click();
+  await page
+    .getByRole('textbox', { name: 'Lightning payment request' })
+    .fill('lntbs1fake1000x1xabc');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('alert')).toContainText(/expired/i);
+  await page.getByRole('button', { name: 'Back to scanner' }).click();
+  await page.getByRole('button', { name: 'Ecash' }).click();
+  await expect(page.getByRole('button', { name: 'Review send' })).toBeVisible();
+  await page.getByRole('button', { name: 'Wallet home' }).click();
+
   await page.getByRole('button', { name: 'Backup and settings' }).click();
   await page.getByRole('button', { name: /Seed & PIN/ }).click();
   await page.getByRole('button', { name: 'Reveal recovery words' }).click();

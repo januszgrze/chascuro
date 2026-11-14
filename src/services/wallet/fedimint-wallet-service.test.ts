@@ -538,12 +538,15 @@ describe('Fedimint Lightning payment boundary', () => {
       contract_id: 'contract-id',
       fee: 1_100,
     });
+    const listGateways = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ info: { ...gateway, fees: {} }, vetted: true }])
+      .mockResolvedValue([{ info: gateway, vetted: true }]);
     const wallet = {
       lightning: {
         updateGatewayCache: vi.fn().mockResolvedValue(undefined),
-        listGateways: vi
-          .fn()
-          .mockResolvedValue([{ info: gateway, vetted: true }]),
+        listGateways,
         payInvoice,
         subscribeLnPay: vi.fn(
           (
@@ -567,6 +570,10 @@ describe('Fedimint Lightning payment boundary', () => {
       ...activeFederation,
       network: 'unknown' as const,
     };
+    const otherFederation = {
+      ...lightningFederation,
+      federationId: federationId('fed-b'),
+    };
     Object.assign(service as unknown as Record<string, unknown>, {
       wallet,
       director,
@@ -575,6 +582,14 @@ describe('Fedimint Lightning payment boundary', () => {
           lightningFederation.federationId,
           {
             federation: lightningFederation,
+            wallet,
+            balanceMsats: msats(0n),
+          },
+        ],
+        [
+          otherFederation.federationId,
+          {
+            federation: otherFederation,
             wallet,
             balanceMsats: msats(0n),
           },
@@ -597,18 +612,34 @@ describe('Fedimint Lightning payment boundary', () => {
       sensitiveInput(invoice),
     );
     expect(director.parseBolt11InvoicePayload).toHaveBeenCalledWith(invoice);
-    const quote = await service.lightning.quotePayment({
+    const intent = {
       preview,
       maximumFeeMsats: msats(2_000n),
+    };
+    await expect(service.lightning.quotePayment(intent)).rejects.toMatchObject({
+      code: 'gateway_unavailable',
     });
+    await expect(service.lightning.quotePayment(intent)).rejects.toMatchObject({
+      code: 'fee_quote_unavailable',
+    });
+    const quote = await service.lightning.quotePayment(intent);
     expect(quote).toMatchObject({
       amountMsats: 100_000n,
       feeMsats: 1_100n,
       gatewayId: 'gateway-a',
     });
-    const tracked = await service.lightning.pay(
-      confirmLightningQuote(quote, preview.fingerprint, Date.now()),
+    const confirmed = confirmLightningQuote(
+      quote,
+      preview.fingerprint,
+      Date.now(),
     );
+    await service.federation.select(otherFederation.federationId);
+    await expect(service.lightning.pay(confirmed)).rejects.toMatchObject({
+      code: 'fee_quote_unavailable',
+    });
+    expect(payInvoice).not.toHaveBeenCalled();
+    await service.federation.select(lightningFederation.federationId);
+    const tracked = await service.lightning.pay(confirmed);
     expect(payInvoice).toHaveBeenCalledWith(invoice, gateway, {});
     expect(tracked.operation).toMatchObject({
       kind: 'lightning_send',

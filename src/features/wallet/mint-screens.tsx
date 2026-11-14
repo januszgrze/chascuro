@@ -88,12 +88,18 @@ export function PayFromCard({
   return (
     <div className="pay-from">
       {interactive ? (
-        <button className="pay-from-trigger" type="button" onClick={onPick}>
+        <button
+          className="pay-from-trigger"
+          type="button"
+          aria-label={`${label} ${account.federation.displayName}`}
+          onClick={onPick}
+        >
           <PayFromCardBody
             label={label}
             name={account.federation.displayName}
             subtitle={subtitle}
             balanceMsats={account.balanceMsats}
+            interactive
           />
         </button>
       ) : (
@@ -115,6 +121,7 @@ export function PayFromCard({
 export function MintPickerSheet({
   snapshot,
   direction = 'send',
+  disabled = false,
   open,
   onOpenChange,
   onSelect,
@@ -122,6 +129,7 @@ export function MintPickerSheet({
 }: {
   snapshot: WalletSnapshot;
   direction?: 'send' | 'receive';
+  disabled?: boolean;
   open: boolean;
   onOpenChange(open: boolean): void;
   onSelect(federationId: string): void | Promise<void>;
@@ -132,7 +140,7 @@ export function MintPickerSheet({
   const title = direction === 'receive' ? 'Receive to' : 'Pay from';
 
   useEffect(() => {
-    if (!open) {
+    if (!open || disabled) {
       return;
     }
     function onKeyDown(event: KeyboardEvent) {
@@ -142,7 +150,7 @@ export function MintPickerSheet({
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, onOpenChange]);
+  }, [open, disabled, onOpenChange]);
 
   async function pick(federationId: string) {
     if (federationId !== selectedId) {
@@ -156,7 +164,7 @@ export function MintPickerSheet({
       <PayFromCard
         account={selected}
         direction={direction}
-        onPick={() => onOpenChange(true)}
+        onPick={disabled ? undefined : () => onOpenChange(true)}
       />
       {open ? (
         <div className="mint-sheet-layer">
@@ -164,6 +172,7 @@ export function MintPickerSheet({
             className="mint-sheet-backdrop"
             type="button"
             aria-label="Dismiss mint picker"
+            disabled={disabled}
             onClick={() => onOpenChange(false)}
           />
           <div
@@ -189,6 +198,7 @@ export function MintPickerSheet({
                       className={`choose-mint-row${selectedMint ? ' is-selected' : ''}`}
                       type="button"
                       aria-pressed={selectedMint}
+                      disabled={disabled}
                       onClick={() => void pick(federationId)}
                     >
                       <span className="choose-mint-copy">
@@ -221,6 +231,7 @@ export function MintPickerSheet({
               <button
                 className="choose-mint-connect"
                 type="button"
+                disabled={disabled}
                 onClick={() => {
                   onOpenChange(false);
                   onConnectMint();
@@ -242,11 +253,13 @@ function PayFromCardBody({
   name,
   subtitle,
   balanceMsats,
+  interactive = false,
 }: {
   label: string;
   name: string;
   subtitle?: string;
   balanceMsats: FederationAccount['balanceMsats'];
+  interactive?: boolean;
 }) {
   return (
     <>
@@ -260,9 +273,11 @@ function PayFromCardBody({
         </span>
         <span className="pay-from-meta">
           <BtcAmount amount={balanceMsats} />
-          <span className="pay-from-chevron">
-            <ChevronRightGlyph />
-          </span>
+          {interactive && (
+            <span className="pay-from-chevron">
+              <ChevronRightGlyph />
+            </span>
+          )}
         </span>
       </span>
     </>
@@ -371,6 +386,7 @@ export function ChooseMintScreen({
                     className={`choose-mint-row${selectedMint ? ' is-selected' : ''}`}
                     type="button"
                     aria-pressed={selectedMint}
+                    disabled={confirmBusy}
                     onClick={() => {
                       setDraftId(account.federation.federationId);
                     }}
@@ -419,7 +435,7 @@ export function ChooseMintScreen({
           aria-busy={confirmBusy}
           onClick={() => void confirm()}
         >
-          {confirmBusy ? 'Creating…' : 'Confirm'}
+          {confirmBusy ? 'Selecting…' : 'Confirm'}
         </button>
       </div>
     </section>

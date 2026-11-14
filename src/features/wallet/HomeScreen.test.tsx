@@ -522,27 +522,160 @@ describe('HomeScreen scanned wallet input', () => {
   });
 });
 
-describe('HomeScreen Lightning receive', () => {
-  it('shows receive unavailable copy when the federation has no usable Lightning gateway', async () => {
+describe('HomeScreen Lightning availability', () => {
+  const unavailableSnapshot: WalletSnapshot = {
+    ...SNAPSHOT,
+    capabilities: {
+      ...SNAPSHOT.capabilities!,
+      gatewayAvailable: false,
+      lightningSend: 'disabled_gateway_unavailable',
+    },
+  };
+  const otherMint = {
+    ...TEST_FEDERATION,
+    federationId: federationId('other-mint'),
+    displayName: 'Other mint',
+  };
+  const gatewayError = 'No compatible Lightning gateway is available.';
+
+  it('lets the user switch mints and retry the same invoice after a quote error', async () => {
     const user = userEvent.setup();
-    renderHome({
+    const preview = {
+      fingerprint: paymentFingerprint('retry-invoice'),
+      network: 'signet' as const,
+      amountMsats: satsToMsats(1n),
+      expiresAtMs: Date.now() + 60_000,
+    };
+    const quote = {
+      quoteId: quoteId('retry-quote'),
+      invoiceFingerprint: preview.fingerprint,
+      amountMsats: preview.amountMsats,
+      feeMsats: msats(100n),
+      maximumFeeMsats: satsToMsats(10n),
+      expiresAtMs: preview.expiresAtMs,
+    };
+    const snapshot: WalletSnapshot = {
+      ...unavailableSnapshot,
+      federations: [
+        ...SNAPSHOT.federations,
+        { federation: otherMint, balanceMsats: satsToMsats(20n) },
+      ],
+    };
+    const onQuoteLightningPayment = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, error: gatewayError })
+      .mockResolvedValueOnce({ ok: true, value: { preview, quote } });
+    const onPayLightningQuote = vi
+      .fn()
+      .mockResolvedValue({ ok: false, error: 'The wallet operation failed.' });
+    const props = createHomeProps({
+      snapshot,
+      onQuoteLightningPayment,
+      onPayLightningQuote,
+      onSelectFederation: vi.fn().mockImplementation(async () => {
+        rendered.rerender(
+          <HomeScreen
+            {...props}
+            snapshot={{ ...snapshot, activeFederation: otherMint }}
+          />,
+        );
+      }),
+    });
+    const rendered = render(<HomeScreen {...props} />);
+
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(screen.getByRole('button', { name: 'Enter manually' }));
+    await user.type(
+      screen.getByLabelText('Lightning payment request'),
+      'lntb1retryinvoice',
+    );
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(screen.getByRole('alert')).toHaveTextContent(gatewayError);
+    expect(onPayLightningQuote).not.toHaveBeenCalled();
+
+    await user.click(
+      screen.getByRole('button', { name: /Pay from Test mint/ }),
+    );
+    await user.click(screen.getByRole('button', { name: /Other mint/ }));
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(props.onSelectFederation).toHaveBeenCalledWith(
+      otherMint.federationId,
+    );
+    expect(screen.getByLabelText('Lightning payment request')).toHaveValue(
+      'lntb1retryinvoice',
+    );
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(onQuoteLightningPayment).toHaveBeenCalledTimes(2);
+    expect(onQuoteLightningPayment).toHaveBeenLastCalledWith(
+      'lntb1retryinvoice',
+      '10',
+    );
+    expect(onPayLightningQuote).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Pay invoice' }));
+    expect(onPayLightningQuote).toHaveBeenCalledWith(preview, quote);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'The wallet operation failed.',
+    );
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    await user.click(screen.getByRole('button', { name: 'Back to scanner' }));
+    await user.click(screen.getByRole('button', { name: 'Ecash' }));
+    expect(screen.getByRole('button', { name: 'Review send' })).toBeVisible();
+  });
+
+  it('lets the user attempt invoice creation, see a failure, and return to Ecash', async () => {
+    const user = userEvent.setup();
+    const onCreateLightningInvoice = vi
+      .fn()
+      .mockResolvedValue({ ok: false, error: gatewayError });
+    const props = renderHome({
       snapshot: {
-        ...SNAPSHOT,
-        capabilities: {
-          ...SNAPSHOT.capabilities!,
-          lightning: false,
-          gatewayAvailable: false,
-          lightningSend: 'unsupported',
-        },
+        ...unavailableSnapshot,
+        federations: [
+          ...SNAPSHOT.federations,
+          { federation: otherMint, balanceMsats: msats(0n) },
+        ],
       },
+      onCreateLightningInvoice,
+      onSelectFederation: vi.fn().mockResolvedValue(undefined),
     });
 
     await user.click(screen.getByRole('button', { name: 'Receive' }));
     await user.click(screen.getByRole('button', { name: 'Lightning' }));
+    await user.click(screen.getByRole('button', { name: '1' }));
+    await user.click(screen.getByRole('button', { name: 'Review receive' }));
+    await user.click(screen.getByRole('button', { name: 'Create invoice' }));
 
-    expect(screen.getByText('Lightning receive is unavailable.')).toBeVisible();
+    expect(onCreateLightningInvoice).toHaveBeenCalledWith('1', '');
+    expect(screen.getByRole('alert')).toHaveTextContent(gatewayError);
+    await user.click(
+      screen.getByRole('button', { name: /Receive to Test mint/ }),
+    );
+    const mintPicker = screen.getByRole('dialog', { name: 'Receive to' });
+    await user.click(
+      within(mintPicker).getByRole('button', { name: /Other mint/ }),
+    );
+    expect(props.onSelectFederation).toHaveBeenCalledWith(
+      otherMint.federationId,
+    );
+    expect(onCreateLightningInvoice).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Create invoice' }));
+    expect(onCreateLightningInvoice).toHaveBeenLastCalledWith('1', '');
+    expect(onCreateLightningInvoice).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('alert')).toHaveTextContent(gatewayError);
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    expect(
+      screen.getByRole('button', { name: 'Review receive' }),
+    ).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Ecash' }));
+    expect(
+      screen.getByRole('button', { name: 'Paste ecash note' }),
+    ).toBeVisible();
   });
+});
 
+describe('HomeScreen Lightning receive', () => {
   it('uses the live snapshot operation and clears a terminal invoice', async () => {
     const user = userEvent.setup();
     const rawInvoice = 'lntb1liveinvoice';
@@ -672,9 +805,7 @@ describe('HomeScreen Lightning receive', () => {
     await user.click(screen.getByRole('button', { name: 'Review receive' }));
 
     expect(screen.getByRole('heading', { name: 'Receive' })).toBeVisible();
-    expect(
-      screen.getByRole('button', { name: /Receive to/ }),
-    ).toBeVisible();
+    expect(screen.getByRole('button', { name: /Receive to/ })).toBeVisible();
     expect(onCreateLightningInvoice).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', { name: /Receive to/ }));
@@ -895,9 +1026,7 @@ describe('HomeScreen settings and secret-storage warnings', () => {
     expect(screen.getByText('tornado')).toBeVisible();
     expect(screen.queryByText('Tap to reveal')).not.toBeInTheDocument();
 
-    await user.click(
-      screen.getByRole('button', { name: 'Back to settings' }),
-    );
+    await user.click(screen.getByRole('button', { name: 'Back to settings' }));
 
     expect(screen.queryByText('gravity')).not.toBeInTheDocument();
     expect(() => mnemonic.reveal()).toThrow();
@@ -926,9 +1055,7 @@ describe('HomeScreen settings and secret-storage warnings', () => {
     await user.click(
       screen.getByRole('button', { name: 'Reveal recovery words' }),
     );
-    await user.click(
-      screen.getByRole('button', { name: 'Back to settings' }),
-    );
+    await user.click(screen.getByRole('button', { name: 'Back to settings' }));
 
     await act(async () => finishReveal?.({ ok: true, value: mnemonic }));
 

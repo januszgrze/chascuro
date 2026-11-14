@@ -324,10 +324,6 @@ export function HomeScreen(props: HomeScreenProps) {
       return (
         <LightningReceiveScreen
           {...mintProps}
-          enabled={
-            props.snapshot.capabilities?.lightning === true &&
-            props.snapshot.capabilities.gatewayAvailable === true
-          }
           operations={props.snapshot.operations}
           onNavigate={navigate}
           onHome={goHome}
@@ -339,7 +335,6 @@ export function HomeScreen(props: HomeScreenProps) {
       return (
         <LightningSendScreen
           {...mintProps}
-          enabled={props.snapshot.capabilities?.lightningSend === 'enabled'}
           operations={props.snapshot.operations}
           onNavigate={navigate}
           onHome={goHome}
@@ -989,7 +984,6 @@ function EcashSendScreen({
 }
 
 function LightningReceiveScreen({
-  enabled,
   operations,
   onNavigate,
   onHome,
@@ -999,7 +993,6 @@ function LightningReceiveScreen({
   onSelectFederation,
   onConnectMint,
 }: PaymentNavProps & {
-  enabled: boolean;
   operations: readonly WalletOperation[];
   onDone(): void;
   onCreate(
@@ -1078,33 +1071,6 @@ function LightningReceiveScreen({
       setReceive(undefined);
       setCopyStatus(undefined);
     });
-  }
-
-  if (!enabled) {
-    return (
-      <section
-        className="confirm-shell"
-        aria-labelledby="lightning-receive-title"
-      >
-        <div className="confirm-topbar">
-          <button
-            className="confirm-back"
-            type="button"
-            aria-label="Back"
-            onClick={onHome}
-          >
-            <ChevronLeftIcon />
-          </button>
-          <h1 id="lightning-receive-title" className="confirm-title">
-            Your invoice
-          </h1>
-        </div>
-        <div className="notice">
-          <strong>Lightning receive is unavailable.</strong>
-          <p>This federation has no usable Lightning gateway right now.</p>
-        </div>
-      </section>
-    );
   }
 
   if (receive !== undefined) {
@@ -1245,10 +1211,17 @@ function LightningReceiveScreen({
         <MintPickerSheet
           snapshot={snapshot}
           direction="receive"
+          disabled={busy}
           open={pickingMint}
           onOpenChange={setPickingMint}
           onSelect={async (federationId) => {
-            await onSelectFederation?.(federationId);
+            setBusy(true);
+            try {
+              await onSelectFederation?.(federationId);
+              setError(undefined);
+            } finally {
+              setBusy(false);
+            }
           }}
           onConnectMint={() => onConnectMint?.()}
         />
@@ -1278,7 +1251,6 @@ function LightningReceiveScreen({
 }
 
 function LightningSendScreen({
-  enabled,
   operations,
   onNavigate,
   onHome,
@@ -1291,7 +1263,6 @@ function LightningSendScreen({
   onSelectFederation,
   onConnectMint,
 }: PaymentNavProps & {
-  enabled: boolean;
   operations: readonly WalletOperation[];
   onDone(): void;
   onQuote(
@@ -1316,6 +1287,7 @@ function LightningSendScreen({
 }) {
   const [manual, setManual] = useState('');
   const [showManual, setShowManual] = useState(false);
+  const [invoiceToRetry, setInvoiceToRetry] = useState<string>();
   const [offer, setOffer] = useState<LnurlPayOffer>();
   const [amount, setAmount] = useState('');
   const [review, setReview] = useState<{
@@ -1351,10 +1323,10 @@ function LightningSendScreen({
   }, [operationTerminal, revealResult]);
 
   useEffect(() => {
-    if (showManual) {
+    if (showManual && !pickingMint && review === undefined) {
       manualInputRef.current?.focus();
     }
-  }, [showManual]);
+  }, [showManual, pickingMint, review]);
 
   function openManualEntry() {
     if (!showManual) {
@@ -1368,18 +1340,16 @@ function LightningSendScreen({
 
   async function runQuote(input: string) {
     setError(undefined);
+    setInvoiceToRetry(undefined);
     setBusy(true);
     const result = await onQuote(input, feeLimitSats);
     setBusy(false);
+    setInvoiceToRetry(input);
     if (!result.ok) {
       setError(result.error);
       return;
     }
-    runViewTransition('forward', () => {
-      setManual('');
-      setShowManual(false);
-      setReview(result.value);
-    });
+    runViewTransition('forward', () => setReview(result.value));
   }
 
   async function resolveLnurl(input: string) {
@@ -1400,6 +1370,7 @@ function LightningSendScreen({
   }
 
   async function submitPaymentTarget(value: string) {
+    setInvoiceToRetry(undefined);
     try {
       const classified = classifyWalletInput(value);
       switch (classified.kind) {
@@ -1477,47 +1448,41 @@ function LightningSendScreen({
     setOperation(result.value.operation);
   }
 
+  const payFrom = (
+    <PayFromCard
+      account={selectedMintAccount(snapshot)}
+      onPick={
+        busy || onSelectFederation === undefined
+          ? undefined
+          : () => setPickingMint(true)
+      }
+    />
+  );
+
   if (pickingMint) {
     return (
       <ChooseMintScreen
         snapshot={snapshot}
         intent="lightning-send"
-        amountMsats={review?.quote.amountMsats}
         selectedId={snapshot.activeFederation?.federationId}
+        confirmBusy={busy}
         onConfirm={async (federationId) => {
-          await onSelectFederation?.(federationId);
-          setPickingMint(false);
+          if (federationId === snapshot.activeFederation?.federationId) {
+            setPickingMint(false);
+            return;
+          }
+          setBusy(true);
+          try {
+            await onSelectFederation?.(federationId);
+            setError(undefined);
+            setPickingMint(false);
+          } finally {
+            setBusy(false);
+          }
         }}
         onClose={() => setPickingMint(false)}
         onConnectMint={() => onConnectMint?.()}
       />
-    );
-  }
-
-  if (!enabled) {
-    return (
-      <section className="confirm-shell" aria-labelledby="lightning-send-title">
-        <div className="confirm-topbar">
-          <button
-            className="confirm-back"
-            type="button"
-            aria-label="Back"
-            onClick={onHome}
-          >
-            <ChevronLeftIcon />
-          </button>
-          <h1 id="lightning-send-title" className="confirm-title">
-            Pay invoice
-          </h1>
-        </div>
-        <div className="notice">
-          <strong>Payment submission is disabled.</strong>
-          <p>
-            The active adapter cannot prove a fee bound before payment. The
-            wallet will not submit an invoice without that protection.
-          </p>
-        </div>
-      </section>
     );
   }
 
@@ -1623,6 +1588,7 @@ function LightningSendScreen({
               <span className="amount-value">{fixedAmountLabel}</span>
             </div>
           )}
+          <div className="lightning-send-mint">{payFrom}</div>
         </div>
         <div className="screen-actions">
           {amount.length > 0 && amountError !== undefined && (
@@ -1684,10 +1650,7 @@ function LightningSendScreen({
           </button>
         }
       >
-        <PayFromCard
-          account={selectedMintAccount(snapshot)}
-          onPick={() => setPickingMint(true)}
-        />
+        <PayFromCard account={selectedMintAccount(snapshot)} />
         <div className="pay-card pay-card--compact">
           <div className="pay-row">
             <span className="pay-label">Network fee</span>
@@ -1711,7 +1674,25 @@ function LightningSendScreen({
       onKeyboard={toggleManualEntry}
       hideNavigation={showManual}
     >
-      <div className={`scan-body${showManual ? ' scan-body--manual' : ''}`}>
+      <div
+        className={`scan-body scan-body--lightning${showManual ? ' scan-body--manual' : ''}`}
+      >
+        {payFrom}
+        {error !== undefined && (
+          <p className="scan-error" role="alert">
+            {error}
+          </p>
+        )}
+        {!showManual && invoiceToRetry !== undefined && (
+          <button
+            className="scan-paste"
+            type="button"
+            disabled={busy}
+            onClick={() => void runQuote(invoiceToRetry)}
+          >
+            Get a new fee quote
+          </button>
+        )}
         {showManual ? (
           <div className="scan-manual">
             <textarea
@@ -1723,6 +1704,7 @@ function LightningSendScreen({
               value={manual}
               onChange={(event) => {
                 setError(undefined);
+                setInvoiceToRetry(undefined);
                 setManual(event.target.value);
               }}
             />
@@ -1733,6 +1715,13 @@ function LightningSendScreen({
               onClick={() => void submitPaymentTarget(manual)}
             >
               Continue
+            </button>
+            <button
+              className="scan-paste"
+              type="button"
+              onClick={toggleManualEntry}
+            >
+              Back to scanner
             </button>
           </div>
         ) : (
@@ -1752,11 +1741,6 @@ function LightningSendScreen({
               Paste payment URL
             </button>
           </>
-        )}
-        {error !== undefined && (
-          <p className="scan-error" role="alert">
-            {error}
-          </p>
         )}
       </div>
     </SendReceiveShell>
