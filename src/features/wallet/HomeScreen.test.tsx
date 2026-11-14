@@ -242,6 +242,7 @@ describe('HomeScreen scanned wallet input', () => {
       .mockResolvedValue({ ok: false, error: 'Manual invoice parse failed.' });
     const props = renderHome({ onQuoteLightningPayment });
     await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(screen.queryByText('Pay from')).not.toBeInTheDocument();
 
     scanner.payload = 'fedimint-ecash:example';
     await user.click(screen.getByRole('button', { name: 'Scan test QR' }));
@@ -256,6 +257,8 @@ describe('HomeScreen scanned wallet input', () => {
     await user.click(screen.getByRole('button', { name: 'Scan test QR' }));
     expect(onQuoteLightningPayment).toHaveBeenCalledWith('lntb1example', '10');
     expect(props.onPayLightningQuote).not.toHaveBeenCalled();
+    expect(screen.getByText('Pay from')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Back' }));
 
     await user.click(screen.getByRole('button', { name: 'Enter manually' }));
     expect(screen.getByLabelText('Lightning payment request')).toHaveFocus();
@@ -279,6 +282,7 @@ describe('HomeScreen scanned wallet input', () => {
       '10',
     );
 
+    await user.click(screen.getByRole('button', { name: 'Back' }));
     await user.click(screen.getByRole('button', { name: 'Enter manually' }));
     expect(
       screen.queryByLabelText('Lightning payment request'),
@@ -572,11 +576,15 @@ describe('HomeScreen Lightning availability', () => {
       snapshot,
       onQuoteLightningPayment,
       onPayLightningQuote,
-      onSelectFederation: vi.fn().mockImplementation(async () => {
+      onSelectFederation: vi.fn().mockImplementation(async (id: string) => {
         rendered.rerender(
           <HomeScreen
             {...props}
-            snapshot={{ ...snapshot, activeFederation: otherMint }}
+            snapshot={{
+              ...snapshot,
+              activeFederation:
+                id === otherMint.federationId ? otherMint : TEST_FEDERATION,
+            }}
           />,
         );
       }),
@@ -601,10 +609,7 @@ describe('HomeScreen Lightning availability', () => {
     expect(props.onSelectFederation).toHaveBeenCalledWith(
       otherMint.federationId,
     );
-    expect(screen.getByLabelText('Lightning payment request')).toHaveValue(
-      'lntb1retryinvoice',
-    );
-    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await user.click(screen.getByRole('button', { name: 'Get fee quote' }));
     expect(onQuoteLightningPayment).toHaveBeenCalledTimes(2);
     expect(onQuoteLightningPayment).toHaveBeenLastCalledWith(
       'lntb1retryinvoice',
@@ -612,13 +617,27 @@ describe('HomeScreen Lightning availability', () => {
     );
     expect(onPayLightningQuote).not.toHaveBeenCalled();
 
+    await user.click(
+      screen.getByRole('button', { name: /Pay from Other mint/ }),
+    );
+    await user.click(screen.getByRole('button', { name: /Test mint/ }));
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(screen.queryByText('Network fee')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Pay invoice' }),
+    ).not.toBeInTheDocument();
+    onQuoteLightningPayment.mockResolvedValueOnce({
+      ok: true,
+      value: { preview, quote },
+    });
+    await user.click(screen.getByRole('button', { name: 'Get fee quote' }));
     await user.click(screen.getByRole('button', { name: 'Pay invoice' }));
     expect(onPayLightningQuote).toHaveBeenCalledWith(preview, quote);
     expect(screen.getByRole('alert')).toHaveTextContent(
       'The wallet operation failed.',
     );
     await user.click(screen.getByRole('button', { name: 'Back' }));
-    await user.click(screen.getByRole('button', { name: 'Back to scanner' }));
+    await user.click(screen.getByRole('button', { name: 'Enter manually' }));
     await user.click(screen.getByRole('button', { name: 'Ecash' }));
     expect(screen.getByRole('button', { name: 'Review send' })).toBeVisible();
   });

@@ -1287,7 +1287,7 @@ function LightningSendScreen({
 }) {
   const [manual, setManual] = useState('');
   const [showManual, setShowManual] = useState(false);
-  const [invoiceToRetry, setInvoiceToRetry] = useState<string>();
+  const [invoice, setInvoice] = useState<string>();
   const [offer, setOffer] = useState<LnurlPayOffer>();
   const [amount, setAmount] = useState('');
   const [review, setReview] = useState<{
@@ -1323,10 +1323,10 @@ function LightningSendScreen({
   }, [operationTerminal, revealResult]);
 
   useEffect(() => {
-    if (showManual && !pickingMint && review === undefined) {
+    if (showManual && invoice === undefined && review === undefined) {
       manualInputRef.current?.focus();
     }
-  }, [showManual, pickingMint, review]);
+  }, [showManual, invoice, review]);
 
   function openManualEntry() {
     if (!showManual) {
@@ -1340,16 +1340,22 @@ function LightningSendScreen({
 
   async function runQuote(input: string) {
     setError(undefined);
-    setInvoiceToRetry(undefined);
     setBusy(true);
     const result = await onQuote(input, feeLimitSats);
-    setBusy(false);
-    setInvoiceToRetry(input);
-    if (!result.ok) {
-      setError(result.error);
-      return;
+    function showQuoteResult() {
+      setBusy(false);
+      setInvoice(input);
+      if (result.ok) {
+        setReview(result.value);
+      } else {
+        setError(result.error);
+      }
     }
-    runViewTransition('forward', () => setReview(result.value));
+    if (invoice === undefined) {
+      runViewTransition('forward', showQuoteResult);
+    } else {
+      showQuoteResult();
+    }
   }
 
   async function resolveLnurl(input: string) {
@@ -1370,7 +1376,6 @@ function LightningSendScreen({
   }
 
   async function submitPaymentTarget(value: string) {
-    setInvoiceToRetry(undefined);
     try {
       const classified = classifyWalletInput(value);
       switch (classified.kind) {
@@ -1443,6 +1448,9 @@ function LightningSendScreen({
       setError(result.error);
       return;
     }
+    setInvoice(undefined);
+    setManual('');
+    setShowManual(false);
     // Keep the user on the review screen with the Pay button animating; the
     // settle-watching effect promotes this to the result screen once terminal.
     setOperation(result.value.operation);
@@ -1452,7 +1460,7 @@ function LightningSendScreen({
     <PayFromCard
       account={selectedMintAccount(snapshot)}
       onPick={
-        busy || onSelectFederation === undefined
+        busy || paying || onSelectFederation === undefined
           ? undefined
           : () => setPickingMint(true)
       }
@@ -1474,6 +1482,7 @@ function LightningSendScreen({
           setBusy(true);
           try {
             await onSelectFederation?.(federationId);
+            setReview(undefined);
             setError(undefined);
             setPickingMint(false);
           } finally {
@@ -1611,14 +1620,17 @@ function LightningSendScreen({
     );
   }
 
-  if (review !== undefined) {
-    const amountLabel = formatMsatsAsSats(review.quote.amountMsats);
+  if (invoice !== undefined || review !== undefined) {
+    const amountLabel =
+      review === undefined
+        ? undefined
+        : formatMsatsAsSats(review.quote.amountMsats);
     return (
       <ResultScreen
         titleId="lightning-send-title"
         tone="success"
         direction="out"
-        title="Pay"
+        title={review === undefined ? 'Review invoice' : 'Pay'}
         amountSats={amountLabel}
         error={error}
         icon={<BoltIcon size={52} />}
@@ -1627,6 +1639,7 @@ function LightningSendScreen({
             ? undefined
             : () =>
                 runViewTransition('back', () => {
+                  setInvoice(undefined);
                   setReview(undefined);
                   setError(undefined);
                 })
@@ -1637,7 +1650,13 @@ function LightningSendScreen({
             type="button"
             disabled={busy || paying}
             aria-busy={busy || paying}
-            onClick={() => void pay()}
+            onClick={() => {
+              if (review !== undefined) {
+                void pay();
+              } else if (invoice !== undefined) {
+                void runQuote(invoice);
+              }
+            }}
           >
             {busy || paying ? (
               <span className="pending-dots" aria-hidden="true">
@@ -1646,20 +1665,22 @@ function LightningSendScreen({
                 <i />
               </span>
             ) : null}
-            Pay invoice
+            {review === undefined ? 'Get fee quote' : 'Pay invoice'}
           </button>
         }
       >
-        <PayFromCard account={selectedMintAccount(snapshot)} />
-        <div className="pay-card pay-card--compact">
-          <div className="pay-row">
-            <span className="pay-label">Network fee</span>
-            <span className="pay-value">
-              <BitcoinMark className="btc-symbol" />{' '}
-              {formatMsatsAsSats(review.quote.feeMsats)}
-            </span>
+        {payFrom}
+        {review !== undefined && (
+          <div className="pay-card pay-card--compact">
+            <div className="pay-row">
+              <span className="pay-label">Network fee</span>
+              <span className="pay-value">
+                <BitcoinMark className="btc-symbol" />{' '}
+                {formatMsatsAsSats(review.quote.feeMsats)}
+              </span>
+            </div>
           </div>
-        </div>
+        )}
       </ResultScreen>
     );
   }
@@ -1674,25 +1695,7 @@ function LightningSendScreen({
       onKeyboard={toggleManualEntry}
       hideNavigation={showManual}
     >
-      <div
-        className={`scan-body scan-body--lightning${showManual ? ' scan-body--manual' : ''}`}
-      >
-        {payFrom}
-        {error !== undefined && (
-          <p className="scan-error" role="alert">
-            {error}
-          </p>
-        )}
-        {!showManual && invoiceToRetry !== undefined && (
-          <button
-            className="scan-paste"
-            type="button"
-            disabled={busy}
-            onClick={() => void runQuote(invoiceToRetry)}
-          >
-            Get a new fee quote
-          </button>
-        )}
+      <div className={`scan-body${showManual ? ' scan-body--manual' : ''}`}>
         {showManual ? (
           <div className="scan-manual">
             <textarea
@@ -1704,7 +1707,6 @@ function LightningSendScreen({
               value={manual}
               onChange={(event) => {
                 setError(undefined);
-                setInvoiceToRetry(undefined);
                 setManual(event.target.value);
               }}
             />
@@ -1715,13 +1717,6 @@ function LightningSendScreen({
               onClick={() => void submitPaymentTarget(manual)}
             >
               Continue
-            </button>
-            <button
-              className="scan-paste"
-              type="button"
-              onClick={toggleManualEntry}
-            >
-              Back to scanner
             </button>
           </div>
         ) : (
@@ -1741,6 +1736,11 @@ function LightningSendScreen({
               Paste payment URL
             </button>
           </>
+        )}
+        {error !== undefined && (
+          <p className="scan-error" role="alert">
+            {error}
+          </p>
         )}
       </div>
     </SendReceiveShell>

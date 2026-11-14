@@ -25,10 +25,11 @@ install, or if you emulate `display-mode: standalone` in DevTools. Service
 workers need a secure context: `localhost` or HTTPS.
 
 The wallet can join more than one Fedimint mint on the same seed. Home shows a
-combined total. Choose the mint for Lightning Send before requesting a fee
-quote. Choose the mint for Lightning Receive or Ecash Send on the confirmation
-screen. Lightning checks the selected mint's gateway when you request a fee
-quote or create an invoice. If that fails, you can go back, retry, choose
+combined total. The Lightning Send scanner opens the payment review after you
+scan, paste, or enter an invoice. You can change the paying mint there and
+request a new fee quote. Choose the mint for Lightning Receive or Ecash Send
+on the confirmation screen. Lightning checks the selected mint's gateway when
+you request a fee quote or create an invoice. If that fails, you can go back, retry, choose
 another mint, or switch to Ecash. Ecash redeem routes to the matching joined
 mint. Leaving a mint is not supported yet.
 

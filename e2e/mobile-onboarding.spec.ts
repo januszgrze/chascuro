@@ -46,19 +46,38 @@ test('completes the explicit simulated onboarding flow on mobile', async ({
     fullPage: true,
   });
 
+  await page.getByRole('button', { name: 'Receive' }).click();
+  const ecashCamera = await page.locator('.scan-frame').boundingBox();
+  const ecashPaste = await page
+    .getByRole('button', { name: 'Paste ecash note' })
+    .boundingBox();
+  expect(ecashCamera).not.toBeNull();
+  expect(ecashPaste).not.toBeNull();
+
   await page.getByRole('button', { name: 'Send' }).click();
-  await page.getByRole('button', { name: /Pay from Demo Federation/ }).click();
-  await expect(
-    page.getByRole('heading', { name: 'Choose a mint' }),
-  ).toBeVisible();
-  await page.getByRole('button', { name: 'Close' }).click();
+  await expect(page.getByRole('button', { name: /Pay from/ })).toHaveCount(0);
+  await expect
+    .poll(() => page.locator('.scan-frame').boundingBox())
+    .toEqual(ecashCamera);
+  await expect
+    .poll(() =>
+      page.getByRole('button', { name: 'Paste payment URL' }).boundingBox(),
+    )
+    .toEqual(ecashPaste);
   await page.getByRole('button', { name: 'Enter manually' }).click();
+  await expect(page.getByRole('button', { name: /Pay from/ })).toHaveCount(0);
   await page
     .getByRole('textbox', { name: 'Lightning payment request' })
     .fill('lntbs1fake1000x1xabc');
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByRole('alert')).toContainText(/expired/i);
-  await page.getByRole('button', { name: 'Back to scanner' }).click();
+  await page.getByRole('button', { name: /Pay from Demo Federation/ }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Choose a mint' }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: 'Back' }).click();
+  await page.getByRole('button', { name: 'Enter manually' }).click();
   await page.getByRole('button', { name: 'Ecash' }).click();
   await expect(page.getByRole('button', { name: 'Review send' })).toBeVisible();
   await page.getByRole('button', { name: 'Wallet home' }).click();
